@@ -171,9 +171,10 @@ $parsed = json_decode($response, true);
 // 平台标签
 $platform_label = $matched_api ? basename(dirname($matched_api)) : 'external';
 
-// 记录调用日志
+// 记录调用日志（无论成功失败，用于调试）
 $ip = $_SERVER['REMOTE_ADDR'] ?? '';
 $platform = $platform_label;
+$today = date('Y-m-d');
 $status = ($http_code == 200 && isset($parsed['code']) && $parsed['code'] == 200) ? 'success' : 'failed';
 
 $stmt = $db->prepare("INSERT INTO usage_log (key_id, url, platform, ip, status) VALUES (?, ?, ?, ?, ?)");
@@ -184,31 +185,34 @@ $stmt->bindValue(4, $ip, SQLITE3_TEXT);
 $stmt->bindValue(5, $status, SQLITE3_TEXT);
 $stmt->execute();
 
-// 更新使用次数
-$stmt = $db->prepare("UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?");
-$stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-$stmt->execute();
-
-// 记录每日用量
-if ($key_data['daily_limit'] > 0) {
-    $today = date('Y-m-d');
-    $stmt = $db->prepare("INSERT INTO key_daily_usage (key_id, date, used_count) VALUES (?, ?, 1) ON CONFLICT(key_id, date) DO UPDATE SET used_count = used_count + 1");
-    $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-    $stmt->bindValue(2, $today, SQLITE3_TEXT);
-    $stmt->execute();
-}
-
-// 测试密钥记录按IP用量
-if ($key_data['is_test']) {
-    $stmt = $db->prepare("INSERT INTO test_ip_usage (key_id, ip_address, date, used_count) VALUES (?, ?, ?, 1) ON CONFLICT(key_id, ip_address, date) DO UPDATE SET used_count = used_count + 1");
-    $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-    $stmt->bindValue(2, $ip, SQLITE3_TEXT);
-    $stmt->bindValue(3, $today, SQLITE3_TEXT);
-    $stmt->execute();
-}
-
+// ❗ 检查解析结果 — 只有成功才消耗次数
 if ($http_code != 200 || !$parsed || !isset($parsed['code'])) {
     jsonExit(500, '解析服务异常');
+}
+
+// ✅ 解析成功 → 更新使用次数
+if ($status === 'success') {
+    // 更新密钥使用次数
+    $stmt = $db->prepare("UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?");
+    $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+    $stmt->execute();
+
+    // 记录每日用量（仅日限密钥）
+    if ($key_data['daily_limit'] > 0) {
+        $stmt = $db->prepare("INSERT INTO key_daily_usage (key_id, date, used_count) VALUES (?, ?, 1) ON CONFLICT(key_id, date) DO UPDATE SET used_count = used_count + 1");
+        $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+        $stmt->bindValue(2, $today, SQLITE3_TEXT);
+        $stmt->execute();
+    }
+
+    // 测试密钥记录按IP用量
+    if ($key_data['is_test']) {
+        $stmt = $db->prepare("INSERT INTO test_ip_usage (key_id, ip_address, date, used_count) VALUES (?, ?, ?, 1) ON CONFLICT(key_id, ip_address, date) DO UPDATE SET used_count = used_count + 1");
+        $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+        $stmt->bindValue(2, $ip, SQLITE3_TEXT);
+        $stmt->bindValue(3, $today, SQLITE3_TEXT);
+        $stmt->execute();
+    }
 }
 
 // 附加密钥使用信息
