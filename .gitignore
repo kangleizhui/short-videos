@@ -1,0 +1,20 @@
+# Sensitive data
+data/keys.db
+data/keys/*.pem
+data/keys/*.key
+data/*.log
+
+# Generated media
+synth/
+douyin*.mp4
+img/pay_qr.*
+
+# Zip packages
+*.zip
+
+# Backup files
+*.bak
+
+# System files
+admin/
+index.html

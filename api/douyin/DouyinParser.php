@@ -252,6 +252,12 @@ class DouyinParser
             'type' => 'unknown',
             'title' => $detail['desc'] ?? '',
             'desc' => $detail['desc'] ?? '',
+            'stats' => [
+                'liked_count' => intval($detail['statistics']['digg_count'] ?? $detail['stats']['digg_count'] ?? 0),
+                'comment_count' => intval($detail['statistics']['comment_count'] ?? $detail['stats']['comment_count'] ?? 0),
+                'share_count' => intval($detail['statistics']['share_count'] ?? $detail['stats']['share_count'] ?? 0),
+                'play_count' => intval($detail['statistics']['play_count'] ?? $detail['stats']['play_count'] ?? 0),
+            ],
             'author' => [
                 'name' => $detail['authorInfo']['nickname'] ?? ($detail['author']['nickname'] ?? ''),
                 'id' => $detail['authorInfo']['uid'] ?? ($detail['author']['uid'] ?? ''),

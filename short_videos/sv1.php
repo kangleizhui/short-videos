@@ -115,7 +115,7 @@ function requestUrl($url, $method = 'GET', $data = [])
     }
 
     // 设置超时时间
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
 
     // 不验证SSL证书（生产环境建议开启验证）
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);

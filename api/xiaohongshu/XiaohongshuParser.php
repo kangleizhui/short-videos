@@ -360,6 +360,12 @@ class XiaohongshuParser
             'type' => $type, // video, image, live
             'title' => $note['title'] ?? '',
             'desc' => $note['desc'] ?? '',
+            'stats' => [
+                'liked_count' => intval($note['interactInfo']['likedCount'] ?? $note['likedCount'] ?? 0),
+                'comment_count' => intval($note['interactInfo']['commentCount'] ?? $note['commentCount'] ?? 0),
+                'collected_count' => intval($note['interactInfo']['collectedCount'] ?? $note['collectedCount'] ?? 0),
+                'share_count' => intval($note['interactInfo']['shareCount'] ?? $note['shareCount'] ?? 0),
+            ],
             'author' => [
                 'name' => $note['user']['nickname'] ?? $note['user']['nickName'] ?? '',
                 'id' => $note['user']['userId'] ?? '',
