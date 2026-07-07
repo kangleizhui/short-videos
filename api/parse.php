@@ -15,10 +15,30 @@ $db_path = __DIR__ . '/../data/keys.db';
 
 function getDB() {
     global $db_path;
-    $db = new SQLite3($db_path);
-    $db->exec('PRAGMA journal_mode=WAL');
-    $db->exec('PRAGMA foreign_keys=ON');
-    return $db;
+    // 最多重试3次解决 "database is locked"
+    for ($i = 0; $i < 3; $i++) {
+        try {
+            $db = new SQLite3($db_path);
+            $db->exec('PRAGMA journal_mode=WAL');
+            $db->exec('PRAGMA foreign_keys=ON');
+            $db->exec('PRAGMA busy_timeout=5000');  // 忙时等5秒再放弃
+            return $db;
+        } catch (Exception $e) {
+            if ($i >= 2) throw $e;
+            usleep(100000 * ($i + 1)); // 100ms, 200ms, 300ms
+        }
+    }
+}
+
+function dbExecRetry($db, $stmt) {
+    for ($i = 0; $i < 3; $i++) {
+        try {
+            return $stmt->execute();
+        } catch (Exception $e) {
+            if (strpos($e->getMessage(), 'locked') === false || $i >= 2) throw $e;
+            usleep(100000 * ($i + 1));
+        }
+    }
 }
 
 function jsonExit($code, $msg, $data = []) {
@@ -37,9 +57,9 @@ if (empty($url)) jsonExit(400, '缺少参数: url (视频链接)');
 
 // 验证密钥
 $db = getDB();
-$stmt = $db->prepare("SELECT * FROM api_keys WHERE key_string = ?");
+$stmt = $db->prepare('SELECT * FROM api_keys WHERE key_string = ?');
 $stmt->bindValue(1, $key, SQLITE3_TEXT);
-$result = $stmt->execute();
+$result = dbExecRetry($db, $stmt);
 $key_data = $result->fetchArray(SQLITE3_ASSOC);
 
 if (!$key_data) jsonExit(403, '密钥无效');
@@ -52,42 +72,35 @@ if ($key_data['expires_at']) {
     }
 }
 
-// 检查次数（type=count 且 total_count > 0 才检查，0=无限）
+// 检查次数
 if ($key_data['type'] === 'count' && $key_data['total_count'] > 0) {
     if ($key_data['used_count'] >= $key_data['total_count']) {
         jsonExit(403, '密钥次数已用完');
     }
 }
 
-
-// 每日上限检查（daily_limit > 0 的密钥）
+// 每日上限检查
 if ($key_data['daily_limit'] > 0) {
     $today = date('Y-m-d');
-    
-    // 查今天用了多少次
-    $stmt = $db->prepare("SELECT used_count FROM key_daily_usage WHERE key_id = ? AND date = ?");
+    $stmt = $db->prepare('SELECT used_count FROM key_daily_usage WHERE key_id = ? AND date = ?');
     $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
     $stmt->bindValue(2, $today, SQLITE3_TEXT);
-    $r = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
-    
+    $r = dbExecRetry($db, $stmt)->fetchArray(SQLITE3_ASSOC);
     if ($r && $r['used_count'] >= $key_data['daily_limit']) {
         jsonExit(429, '今日调用次数已达上限（' . $key_data['daily_limit'] . '次），明天再试');
     }
 }
 
-// 测试密钥的按IP每日限制（防止单用户刷完所有次数）
+// 测试密钥的按IP每日限制
 if ($key_data['is_test']) {
     $today = date('Y-m-d');
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     $MAX_DAILY_PER_IP = 10;
-    
-    // 查今天这个IP用了多少次
-    $stmt = $db->prepare("SELECT used_count FROM test_ip_usage WHERE key_id = ? AND ip_address = ? AND date = ?");
+    $stmt = $db->prepare('SELECT used_count FROM test_ip_usage WHERE key_id = ? AND ip_address = ? AND date = ?');
     $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
     $stmt->bindValue(2, $ip, SQLITE3_TEXT);
     $stmt->bindValue(3, $today, SQLITE3_TEXT);
-    $r = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
-    
+    $r = dbExecRetry($db, $stmt)->fetchArray(SQLITE3_ASSOC);
     if ($r && $r['used_count'] >= $MAX_DAILY_PER_IP) {
         jsonExit(429, '测试密钥每日每IP限' . $MAX_DAILY_PER_IP . '次，已达上限，请购买正式套餐获取更多次数');
     }
@@ -120,7 +133,6 @@ foreach ($platforms as $name => $cfg) {
 }
 
 if ($matched_api) {
-    // 调用本地解析器
     $parser_url = 'http://localhost:8080' . $matched_api . '?url=' . urlencode($url);
     $ch = curl_init();
     curl_setopt_array($ch, [
@@ -133,8 +145,7 @@ if ($matched_api) {
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    
-    // 降级到外部聚合器
+
     $parsed_try = json_decode($response, true);
     if ($http_code != 200 || !$parsed_try || !isset($parsed_try['code']) || $parsed_try['code'] != 200) {
         $aggregator_url = 'http://localhost:8080/short_videos/sv1.php?url=' . urlencode($url);
@@ -151,7 +162,6 @@ if ($matched_api) {
         curl_close($ch);
     }
 } else {
-    // 未知平台，降级到外部聚合器
     $aggregator_url = 'http://localhost:8080/short_videos/sv1.php?url=' . urlencode($url);
     $ch = curl_init();
     curl_setopt_array($ch, [
@@ -167,55 +177,48 @@ if ($matched_api) {
 }
 
 $parsed = json_decode($response, true);
-
-// 平台标签
 $platform_label = $matched_api ? basename(dirname($matched_api)) : 'external';
 
-// 记录调用日志（无论成功失败，用于调试）
+// 记录日志
 $ip = $_SERVER['REMOTE_ADDR'] ?? '';
 $platform = $platform_label;
 $today = date('Y-m-d');
 $status = ($http_code == 200 && isset($parsed['code']) && $parsed['code'] == 200) ? 'success' : 'failed';
 
-$stmt = $db->prepare("INSERT INTO usage_log (key_id, url, platform, ip, status) VALUES (?, ?, ?, ?, ?)");
+$stmt = $db->prepare('INSERT INTO usage_log (key_id, url, platform, ip, status) VALUES (?, ?, ?, ?, ?)');
 $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
 $stmt->bindValue(2, $url, SQLITE3_TEXT);
 $stmt->bindValue(3, $platform, SQLITE3_TEXT);
 $stmt->bindValue(4, $ip, SQLITE3_TEXT);
 $stmt->bindValue(5, $status, SQLITE3_TEXT);
-$stmt->execute();
+dbExecRetry($db, $stmt);
 
-// ❗ 检查解析结果 — 只有成功才消耗次数
 if ($http_code != 200 || !$parsed || !isset($parsed['code'])) {
     jsonExit(500, '解析服务异常');
 }
 
-// ✅ 解析成功 → 更新使用次数
+// 更新次数
 if ($status === 'success') {
-    // 更新密钥使用次数
-    $stmt = $db->prepare("UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?");
+    $stmt = $db->prepare('UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?');
     $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-    $stmt->execute();
+    dbExecRetry($db, $stmt);
 
-    // 记录每日用量（仅日限密钥）
     if ($key_data['daily_limit'] > 0) {
-        $stmt = $db->prepare("INSERT INTO key_daily_usage (key_id, date, used_count) VALUES (?, ?, 1) ON CONFLICT(key_id, date) DO UPDATE SET used_count = used_count + 1");
+        $stmt = $db->prepare('INSERT INTO key_daily_usage (key_id, date, used_count) VALUES (?, ?, 1) ON CONFLICT(key_id, date) DO UPDATE SET used_count = used_count + 1');
         $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
         $stmt->bindValue(2, $today, SQLITE3_TEXT);
-        $stmt->execute();
+        dbExecRetry($db, $stmt);
     }
 
-    // 测试密钥记录按IP用量
     if ($key_data['is_test']) {
-        $stmt = $db->prepare("INSERT INTO test_ip_usage (key_id, ip_address, date, used_count) VALUES (?, ?, ?, 1) ON CONFLICT(key_id, ip_address, date) DO UPDATE SET used_count = used_count + 1");
+        $stmt = $db->prepare('INSERT INTO test_ip_usage (key_id, ip_address, date, used_count) VALUES (?, ?, ?, 1) ON CONFLICT(key_id, ip_address, date) DO UPDATE SET used_count = used_count + 1');
         $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
         $stmt->bindValue(2, $ip, SQLITE3_TEXT);
         $stmt->bindValue(3, $today, SQLITE3_TEXT);
-        $stmt->execute();
+        dbExecRetry($db, $stmt);
     }
 }
 
-// 附加密钥使用信息
 $parsed['key_info'] = [
     'type' => $key_data['type'],
     'used' => $key_data['used_count'] + 1,
@@ -225,10 +228,7 @@ $parsed['key_info'] = [
 ];
 
 // ==========================================
-// 自动合成动图(Live Photo)
-// 检测到 type=live 且有 live_photo 数据时，
-// 服务端自动用 FFmpeg 合成交替式视频
-// AI 直接拿 synthesized_url 下载发给用户
+// ⚡ 异步合成动图(Live Photo) — 带重复请求保护
 // ==========================================
 $do_synthesize = isset($parsed['data']['type']) 
     && $parsed['data']['type'] === 'live'
@@ -242,31 +242,73 @@ if ($do_synthesize) {
     $music_url = $parsed['data']['music']['url'] ?? '';
     
     if ($video_url && $image_url) {
-        $synth_params = http_build_query([
-            'key' => $key,
-            'video_url' => $video_url,
-            'image_url' => $image_url,
-            'music_url' => $music_url,
-        ]);
+        @mkdir('/tmp/synth_jobs', 0755, true);
+        @mkdir('/tmp/synth_locks', 0755, true);
         
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => 'http://localhost:8080/api/synthesize.php?' . $synth_params,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 120,
-            CURLOPT_CONNECTTIMEOUT => 5,
-        ]);
-        $synth_resp = curl_exec($ch);
-        $synth_http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        // 用 video_url+image_url 的 hash 做去重锁
+        $lock_key = md5($video_url . $image_url);
+        $lock_dir = "/tmp/synth_locks/{$lock_key}";
+        $lock_info = "/tmp/synth_locks/{$lock_key}.info";
+        $job_id = '';
+        $spawn_new = false;
         
-        if ($synth_http == 200) {
-            $synth_data = json_decode($synth_resp, true);
-            if (isset($synth_data['data']['url'])) {
-                $parsed['data']['synthesized_url'] = $synth_data['data']['url'];
-                $parsed['data']['synthesized_duration'] = $synth_data['data']['duration'] ?? 0;
+        if (is_dir($lock_dir)) {
+            $existing_job = @file_get_contents($lock_info);
+            $lock_time = filemtime($lock_dir);
+            $age = time() - $lock_time;
+            
+            if ($existing_job && $age < 300) {
+                $job_id = trim($existing_job);
+                $result_file = "/tmp/synth_jobs/{$job_id}.result";
+                if (file_exists($result_file)) {
+                    $res = json_decode(file_get_contents($result_file), true);
+                    if ($res && $res['code'] === 202) {
+                        // 还在处理中，复用 job_id
+                        $spawn_new = false;
+                    } elseif ($res && $res['code'] === 200) {
+                        // 已完成，可以重新 spawn
+                        $spawn_new = true;
+                    } else {
+                        $spawn_new = true;
+                    }
+                } else {
+                    $spawn_new = true;
+                }
+            } else {
+                // 锁过期
+                @rmdir($lock_dir);
+                @unlink($lock_info);
+                $spawn_new = true;
+            }
+        } else {
+            $spawn_new = true;
+        }
+        
+        if ($spawn_new) {
+            $job_id = uniqid('', true);
+            // 原子锁：mkdir 失败说明别的请求刚创建了锁
+            if (@mkdir($lock_dir, 0755)) {
+                file_put_contents($lock_info, $job_id);
+                
+                $esc_key = escapeshellarg($key);
+                $esc_mus = escapeshellarg($music_url);
+                $script = __DIR__ . '/async_job_handler.php';
+                
+                // 启动后台进程，不阻塞
+                                // 写入所有 live_photo 段到 JSON 文件（支持多段合成）
+                file_put_contents("/tmp/synth_jobs/{$job_id}.photos.json", json_encode($parsed['data']['live_photo'], JSON_UNESCAPED_UNICODE));
+                
+                exec("php {$script} {$job_id} {$esc_key} {$esc_mus} > /dev/null 2>&1 &");
+            } else {
+                // 另一个请求刚创建了锁，读它的 job_id
+                $existing_job = @file_get_contents($lock_info);
+                if ($existing_job) $job_id = trim($existing_job);
             }
         }
+        
+        $parsed['data']['synthesized_url'] = null;
+        $parsed['data']['synthesize_job_id'] = $job_id;
+        $parsed['data']['synthesize_status'] = 'processing';
     }
 }
 
