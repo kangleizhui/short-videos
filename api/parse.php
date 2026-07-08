@@ -49,6 +49,8 @@ function jsonExit($code, $msg, $data = []) {
 
 // 获取参数
 $key = trim($_REQUEST['key'] ?? '');
+$key = preg_replace('/[\s
+]+/', '', $key); // 清除空格/换行等干扰字符
 $url = trim($_REQUEST['url'] ?? '');
 $raw_url = trim($_REQUEST['url'] ?? '');
 
@@ -57,6 +59,10 @@ if (empty($url)) jsonExit(400, '缺少参数: url (视频链接)');
 
 // 验证密钥
 $db = getDB();
+
+// 创建去重表（60秒内同一密钥+同一链接只计一次）
+$db->exec('CREATE TABLE IF NOT EXISTS request_dedup (dedup_key TEXT PRIMARY KEY, counted_at INTEGER)');
+
 $stmt = $db->prepare('SELECT * FROM api_keys WHERE key_string = ?');
 $stmt->bindValue(1, $key, SQLITE3_TEXT);
 $result = dbExecRetry($db, $stmt);
@@ -75,7 +81,11 @@ if ($key_data['expires_at']) {
 // 检查次数
 if ($key_data['type'] === 'count' && $key_data['total_count'] > 0) {
     if ($key_data['used_count'] >= $key_data['total_count']) {
-        jsonExit(403, '密钥次数已用完');
+        // 自动停用已用完的密钥
+        $stmt = $db->prepare("UPDATE api_keys SET is_active = 0 WHERE id = ?");
+        $stmt->bindValue(1, $key_data["id"], SQLITE3_INTEGER);
+        dbExecRetry($db, $stmt);
+        jsonExit(403, "密钥次数已用完");
     }
 }
 
@@ -197,34 +207,80 @@ if ($http_code != 200 || !$parsed || !isset($parsed['code'])) {
     jsonExit(500, '解析服务异常');
 }
 
-// 更新次数
+// 更新次数（60秒去重：同一密钥+同一链接只计一次）
+$dedup_counted = false;
 if ($status === 'success') {
-    $stmt = $db->prepare('UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?');
-    $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-    dbExecRetry($db, $stmt);
-
-    if ($key_data['daily_limit'] > 0) {
-        $stmt = $db->prepare('INSERT INTO key_daily_usage (key_id, date, used_count) VALUES (?, ?, 1) ON CONFLICT(key_id, date) DO UPDATE SET used_count = used_count + 1');
+    // 60秒内是否已计费
+    $dedup_key = md5($key_data['id'] . '|' . $url);
+    $st = $db->prepare('SELECT counted_at FROM request_dedup WHERE dedup_key = ?');
+    $st->bindValue(1, $dedup_key, SQLITE3_TEXT);
+    $dr = dbExecRetry($db, $st)->fetchArray(SQLITE3_ASSOC);
+    if ($dr && (time() - $dr['counted_at']) < 60) {
+        $dedup_counted = true;  // 已计过，跳过
+    } else {
+        // 首次计费或距上次已过60秒
+        $stmt = $db->prepare('UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?');
         $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-        $stmt->bindValue(2, $today, SQLITE3_TEXT);
         dbExecRetry($db, $stmt);
     }
 
-    if ($key_data['is_test']) {
-        $stmt = $db->prepare('INSERT INTO test_ip_usage (key_id, ip_address, date, used_count) VALUES (?, ?, ?, 1) ON CONFLICT(key_id, ip_address, date) DO UPDATE SET used_count = used_count + 1');
-        $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-        $stmt->bindValue(2, $ip, SQLITE3_TEXT);
-        $stmt->bindValue(3, $today, SQLITE3_TEXT);
-        dbExecRetry($db, $stmt);
+    if (!$dedup_counted) {
+        if ($key_data['daily_limit'] > 0) {
+            $stmt = $db->prepare('INSERT INTO key_daily_usage (key_id, date, used_count) VALUES (?, ?, 1) ON CONFLICT(key_id, date) DO UPDATE SET used_count = used_count + 1');
+            $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+            $stmt->bindValue(2, $today, SQLITE3_TEXT);
+            dbExecRetry($db, $stmt);
+        }
+
+        if ($key_data['is_test']) {
+            $stmt = $db->prepare('INSERT INTO test_ip_usage (key_id, ip_address, date, used_count) VALUES (?, ?, ?, 1) ON CONFLICT(key_id, ip_address, date) DO UPDATE SET used_count = used_count + 1');
+            $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+            $stmt->bindValue(2, $ip, SQLITE3_TEXT);
+            $stmt->bindValue(3, $today, SQLITE3_TEXT);
+            dbExecRetry($db, $stmt);
+        }
+
+        // 记录本次计费时间
+        $st2 = $db->prepare('INSERT OR REPLACE INTO request_dedup (dedup_key, counted_at) VALUES (?, ?)');
+        $st2->bindValue(1, $dedup_key, SQLITE3_TEXT);
+        $st2->bindValue(2, time(), SQLITE3_INTEGER);
+        dbExecRetry($db, $st2);
     }
+}
+
+$remaining = null;
+$daily_remaining = null;
+if ($key_data['is_test']) {
+    // 测试密钥：返回当前IP今日剩余次数
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    $today = date('Y-m-d');
+    $st = $db->prepare('SELECT used_count FROM test_ip_usage WHERE key_id = ? AND ip_address = ? AND date = ?');
+    $st->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+    $st->bindValue(2, $ip, SQLITE3_TEXT);
+    $st->bindValue(3, $today, SQLITE3_TEXT);
+    $r = $st->execute()->fetchArray(SQLITE3_ASSOC);
+    $daily_used = $r ? (int)$r['used_count'] : 0;
+    $daily_remaining = max(0, 10 - $daily_used);
+} elseif ($key_data['type'] === 'count' && $key_data['total_count'] > 0) {
+    // 计次密钥：剩余次数
+    $remaining = max(0, $key_data['total_count'] - $key_data['used_count']);
+} elseif ($key_data['daily_limit'] > 0) {
+    // 每日限额密钥：今日剩余
+    $today = date('Y-m-d');
+    $st = $db->prepare('SELECT used_count FROM key_daily_usage WHERE key_id = ? AND date = ?');
+    $st->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+    $st->bindValue(2, $today, SQLITE3_TEXT);
+    $r = $st->execute()->fetchArray(SQLITE3_ASSOC);
+    $daily_used = $r ? (int)$r['used_count'] : 0;
+    $daily_remaining = max(0, $key_data['daily_limit'] - $daily_used);
 }
 
 $parsed['key_info'] = [
     'type' => $key_data['type'],
-    'used' => $key_data['used_count'] + 1,
-    'total' => $key_data['total_count'],
-    'expires_at' => $key_data['expires_at'],
     'is_test' => (bool)$key_data['is_test'],
+    'remaining' => $remaining,
+    'daily_remaining' => $daily_remaining,
+    'expires_at' => $key_data['expires_at'],
 ];
 
 // ==========================================
@@ -295,8 +351,28 @@ if ($do_synthesize) {
                 $script = __DIR__ . '/async_job_handler.php';
                 
                 // 启动后台进程，不阻塞
-                                // 写入所有 live_photo 段到 JSON 文件（支持多段合成）
-                file_put_contents("/tmp/synth_jobs/{$job_id}.photos.json", json_encode($parsed['data']['live_photo'], JSON_UNESCAPED_UNICODE));
+                // 🔁 图片URL先走 CF Workers 代理（让后台合成也能下）
+                if (isset($parsed['data']['images']) && is_array($parsed['data']['images'])) {
+                    $cf_proxy_base = 'https://svproxy.kcucu.com/?mediatype=image';
+                    $proxy_fn = function($url) use ($cf_proxy_base) {
+                        if (empty($url)) return $url;
+                        return $cf_proxy_base . '&proxyurl=' . base64_encode($url);
+                    };
+                    foreach ($parsed['data']['images'] as $k => $v) {
+                        $parsed['data']['images'][$k] = $proxy_fn($v);
+                    }
+                    foreach ($parsed['data']['live_photo'] as $k => $v) {
+                        if (!empty($v['image'])) {
+                            $parsed['data']['live_photo'][$k]['image'] = $proxy_fn($v['image']);
+                        }
+                    }
+                }
+                // 写入素材列表：live_photo + 所有 images
+                $synth_data = [
+                    'live_photo' => $parsed['data']['live_photo'] ?? [],
+                    'images' => $parsed['data']['images'] ?? [],
+                ];
+                file_put_contents("/tmp/synth_jobs/{$job_id}.photos.json", json_encode($synth_data, JSON_UNESCAPED_UNICODE));
                 
                 exec("php {$script} {$job_id} {$esc_key} {$esc_mus} > /dev/null 2>&1 &");
             } else {
@@ -310,6 +386,27 @@ if ($do_synthesize) {
         $parsed['data']['synthesize_job_id'] = $job_id;
         $parsed['data']['synthesize_status'] = 'processing';
     }
+}
+
+// ==========================================
+// 🔁 封面/头像/图片代理重写
+// ==========================================
+$CF_PROXY_BASE = 'https://svproxy.kcucu.com/?mediatype=image';
+
+// 图片（如果还没被合成逻辑处理过）
+if (isset($parsed['data']['images']) && is_array($parsed['data']['images'])) {
+    foreach ($parsed['data']['images'] as $k => $v) {
+        if (!empty($v) && strpos($v, 'svproxy.kcucu.com') === false) {
+            $parsed['data']['images'][$k] = $CF_PROXY_BASE . '&proxyurl=' . base64_encode($v);
+        }
+    }
+}
+
+if (!empty($parsed['data']['cover'])) {
+    $parsed['data']['cover'] = $CF_PROXY_BASE . '&proxyurl=' . base64_encode($parsed['data']['cover']);
+}
+if (!empty($parsed['data']['author']['avatar'])) {
+    $parsed['data']['author']['avatar'] = $CF_PROXY_BASE . '&proxyurl=' . base64_encode($parsed['data']['author']['avatar']);
 }
 
 echo json_encode($parsed, JSON_UNESCAPED_UNICODE);
