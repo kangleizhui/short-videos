@@ -54,7 +54,7 @@ QUALITY_PRESET = "medium"  # slow=最小文件，medium=平衡，veryfast=快速
 ## 匹配机制（3层 fallback）
 
 ```
-① 直比URL: live_photo[i].image == images[j]            ← 最可靠，svproxy URL 相同
+① 直比URL: live_photo[i].image == images[j]            ← 最可靠，代理后的URL完全相同
 ② base64补padding解码后文件名匹配                       ← 原始抖音 URL 文件名片段
 ③ 按 images[] 均匀分布位置推测                          ← 兜底，任何段数都行
 ```
