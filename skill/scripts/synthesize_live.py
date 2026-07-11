@@ -23,7 +23,7 @@ QUALITY_PRESET = "medium"
 
 def get_img_filename(url):
     """从任意URL格式提取原始图片文件名"""
-    # 尝试 svproxy 格式: 解码 proxyurl 参数
+    # 尝试代理格式: 解码 proxyurl 参数
     try:
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         proxy = qs.get('proxyurl', [''])[0]
@@ -75,7 +75,7 @@ def match_images_to_live_photo(images, live_photo):
                 mapping[ii] = pi
                 break
 
-    # ⚡ Fallback 1: 直比 URL（svproxy 代理后 URL 一模一样）
+    # ⚡ Fallback 1: 直比 URL（代理后的 URL 完全相同）
     if not mapping:
         for pi, lp in enumerate(live_photo):
             lp_img_url = lp.get('image', '')
