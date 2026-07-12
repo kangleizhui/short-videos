@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>短视频去水印解析 API</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Nunito', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0e0b0d;
+            color: #f0f0f0;
+            line-height: 1.6;
+        }
+        /* ========== Navbar ========== */
+        .navbar{position:fixed;top:0;left:0;right:0;z-index:100;background:#0e0b0d;border-bottom:1px solid rgba(255,255,255,0.06);}
+        .navbar .container{display:flex;align-items:center;justify-content:space-between;height:60px;max-width:1100px;margin:0 auto;padding:0 24px;}
+        .navbar-brand{font-size:15px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#fff;text-decoration:none;}
+        .navbar-links{display:flex;align-items:center;gap:2px;}
+        .navbar-links a{padding:8px 16px;border-radius:6px;font-size:13px;font-weight:500;color:rgba(255,255,255,0.5);text-decoration:none;transition:all .2s;letter-spacing:0.5px;}
+        .navbar-links a:hover{color:#fff;background:rgba(255,255,255,0.04);}
+        .navbar-cta{padding:8px 20px!important;border-radius:100px!important;background:rgba(255,255,255,0.08)!important;color:#fff!important;border:1px solid rgba(255,255,255,0.1)!important;}
+        .navbar-cta:hover{background:rgba(255,255,255,0.12)!important;}
+        .menu-toggle{display:none;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;padding:8px;letter-spacing:2px;}
+        @media(max-width:640px){
+          .navbar-links{display:none;flex-direction:column;position:absolute;top:60px;left:0;right:0;padding:12px;gap:2px;background:#0e0b0d;border-bottom:1px solid rgba(255,255,255,0.06);}
+          .navbar-links.open{display:flex;}
+          .menu-toggle{display:block;}
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 80px 20px 40px; }
+        h1 { font-size: 2em; margin-bottom: 8px; color: #f0f0f0; font-weight: 700; letter-spacing: -0.02em; }
+        .subtitle { color: rgba(255,255,255,0.45); margin-bottom: 30px; }
+        .card {
+            background: rgba(255,255,255,0.02);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        h2 { color: #f0f0f0; font-size: 1.2em; margin-bottom: 12px; font-weight: 600; }
+        .api-list { list-style: none; }
+        .api-list li { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; align-items: center; }
+        .api-list li:last-child { border-bottom: none; }
+        .api-path { color: rgba(255,255,255,0.7); font-family: monospace; font-size: 0.9em; }
+        .api-name { color: rgba(255,255,255,0.45); }
+        code {
+            background: rgba(255,255,255,0.06);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            color: rgba(255,255,255,0.7);
+        }
+        .example {
+            background: rgba(255,255,255,0.04);
+            padding: 16px;
+            border-radius: 8px;
+            margin: 10px 0;
+            overflow-x: auto;
+            border: 1px solid rgba(255,255,255,0.04);
+        }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em; color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.1); }
+        .footer { text-align: center; color: rgba(255,255,255,0.25); margin-top: 40px; font-size: 0.85em; }
+        a { color: rgba(255,255,255,0.7); text-decoration: none; }
+        a:hover { color: #f0f0f0; }
+
+        /* ===== 解析工具样式 ===== */
+        .tool-row { display: flex; gap: 12px; margin-bottom: 12px; align-items: stretch; }
+        .tool-row label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85em; color: rgba(255,255,255,0.45); flex: 1; }
+        .tool-row label span { font-size: 0.85em; }
+        .tool-input {
+            width: 100%;
+            padding: 12px 14px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            color: #f0f0f0;
+            font-size: 0.95em;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .tool-input:focus { border-color: rgba(255,255,255,0.25); }
+        .tool-input::placeholder { color: rgba(255,255,255,0.25); }
+        .btn {
+            padding: 12px 24px;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 100px;
+            cursor: pointer;
+            font-size: 0.95em;
+            font-weight: 600;
+            white-space: nowrap;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            color: #f0f0f0;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: rgba(255,255,255,0.15); }
+        .btn-parse { flex: 1; }
+        .btn-save { padding: 12px 18px; font-size: 0.85em; }
+        .btn-save:disabled { opacity: 0.5; cursor: wait; }
+        .btn-saved { background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.3); border-color: rgba(255,255,255,0.04); cursor: default; }
+        .code-group { display: flex; gap: 8px; }
+        .code-group .tool-input { flex: 1; font-family: monospace; letter-spacing: 1px; text-transform: uppercase; }
+        .parse-btn-row { margin-top: 4px; }
+        .result-box {
+            margin-top: 16px;
+            background: rgba(255,255,255,0.04);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 20px;
+            display: none;
+        }
+        .result-box.show { display: block; }
+        .result-box .result-title { color: #f0f0f0; font-size: 1em; margin-bottom: 8px; word-break: break-all; font-weight: 600; }
+        .result-box .result-meta { color: rgba(255,255,255,0.45); font-size: 0.85em; margin-bottom: 6px; }
+        .result-box .result-meta strong { color: rgba(255,255,255,0.6); }
+        .result-box .result-url {
+            color: rgba(255,255,255,0.7);
+            word-break: break-all;
+            font-family: monospace;
+            font-size: 0.85em;
+            padding: 8px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius: 6px;
+            margin: 8px 0;
+        }
+        .result-box .result-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        .result-box .result-actions a {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 0.85em;
+            font-weight: 500;
+            color: #f0f0f0;
+            text-decoration: none;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            transition: background 0.2s;
+        }
+        .result-box .result-actions a:hover { background: rgba(255,255,255,0.15); }
+        .result-box .result-error { color: rgba(255,255,255,0.6); padding: 8px; }
+        .result-box .result-loading { color: rgba(255,255,255,0.5); text-align: center; padding: 20px; }
+        .result-box .result-loading .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.06); border-top-color: rgba(255,255,255,0.6); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        /* ===== 丰富解析结果样式 ===== */
+        .result-cover { width:100%; max-height:300px; object-fit:cover; border-radius:8px; margin-bottom:12px; }
+        .result-avatar { width:36px; height:36px; border-radius:50%; vertical-align:middle; margin-right:8px; object-fit:cover; }
+        .result-author { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:0.9em; color:rgba(255,255,255,0.45); }
+        .result-author .aname { color:#f0f0f0; font-weight:600; }
+        .result-desc {
+            color: rgba(255,255,255,0.5);
+            font-size:0.9em;
+            margin-bottom:12px;
+            padding:8px 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius:6px;
+            line-height:1.5;
+        }
+        .result-stats { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:12px; }
+        .result-stats .stat-item {
+            display:inline-flex;
+            align-items:center;
+            gap:4px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.04);
+            padding:4px 12px;
+            border-radius:6px;
+            font-size:0.85em;
+            color:rgba(255,255,255,0.45);
+        }
+        .result-stats .stat-item .num { color:#f0f0f0; font-weight:600; }
+        .result-music {
+            display:flex;
+            align-items:center;
+            gap:10px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.04);
+            padding:10px 14px;
+            border-radius:8px;
+            margin-bottom:12px;
+        }
+        .result-music-cover { width:42px; height:42px; border-radius:6px; object-fit:cover; }
+        .result-music-info { flex:1; font-size:0.85em; }
+        .result-music-info .mtitle { color:#f0f0f0; }
+        .result-music-info .mauthor { color:rgba(255,255,255,0.45); font-size:0.85em; }
+        .result-music-info .mlabel { color:rgba(255,255,255,0.5); font-size:0.75em; margin-bottom:2px; }
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 24px;
+            border-radius: 100px;
+            color: #f0f0f0;
+            font-size: 0.9em;
+            z-index: 999;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.08);
+            animation: fadeInOut 2s ease forwards;
+        }
+        @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(-10px); } 15% { opacity: 1; transform: translateY(0); } 85% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
+
+        /* ===== AI技能安装 ===== */
+        .skill-card { margin-bottom: 20px; }
+        .skill-item {
+            background: rgba(255,255,255,0.04);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius:8px;
+            padding:16px;
+            margin-bottom:12px;
+        }
+        .skill-platform {
+            display:inline-block;
+            padding:3px 10px;
+            border-radius:4px;
+            font-size:0.8em;
+            font-weight:600;
+            margin-bottom:8px;
+            color: rgba(255,255,255,0.8);
+            background: rgba(255,255,255,0.1);
+        }
+        .skill-link { display:block; word-break:break-all; font-size:0.85em; }
+        .skill-link a { color: rgba(255,255,255,0.7); text-decoration:none; }
+        .skill-link a:hover { text-decoration:underline; color: #f0f0f0; }
+        .skill-actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+        .skill-btn {
+            padding:6px 14px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius:100px;
+            cursor:pointer;
+            font-size:0.8em;
+            color:#f0f0f0;
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            transition: background 0.2s;
+        }
+        .skill-btn:hover { background: rgba(255,255,255,0.14); }
+        .prompt-collapse { margin-top:8px; }
+        .prompt-toggle {
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            padding:8px 12px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.04);
+            border-radius:6px;
+            cursor:pointer;
+            font-size:0.85em;
+            color:rgba(255,255,255,0.45);
+            user-select:none;
+            transition:all 0.2s;
+        }
+        .prompt-toggle:hover { border-color: rgba(255,255,255,0.15); color: #f0f0f0; }
+        .prompt-toggle .arrow { transition:transform 0.2s; font-size:0.8em; }
+        .prompt-toggle .arrow.open { transform:rotate(180deg); }
+        .prompt-body { display:none; margin-top:8px; }
+        .prompt-body.open { display:block; }
+        .prompt-text {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius:6px;
+            padding:12px;
+            font-size:0.82em;
+            color:rgba(255,255,255,0.5);
+            line-height:1.7;
+            white-space:pre-wrap;
+            word-break:break-all;
+        }
+        .prompt-text .hl { color: rgba(255,255,255,0.7); }
+        .prompt-text .hl2 { color: rgba(255,255,255,0.7); }
+        .skill-intro { color: rgba(255,255,255,0.45); font-size:0.85em; margin-bottom:16px; }
+
+        /* ===== 剩余次数 ===== */
+        .remaining-count { color: rgba(255,255,255,0.6); }
+
+        /* ===== Music placeholder ===== */
+        .music-placeholder {
+            width:42px; height:42px; border-radius:6px;
+            background: rgba(255,255,255,0.06);
+            display:flex; align-items:center; justify-content:center;
+            font-size:1.2em;
+        }
+
+        /* ===== Buy button ===== */
+        .buy-link {
+            display:inline-block;
+            padding:12px 32px;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius:100px;
+            color:#f0f0f0;
+            font-weight:600;
+            text-decoration:none;
+            transition: background 0.2s;
+        }
+        .buy-link:hover { background: rgba(255,255,255,0.15); }
+        .prompt-label {
+            color: rgba(255,255,255,0.5);
+            font-size:0.8em;
+            font-weight:600;
+            margin-bottom:6px;
+        }
+    </style>
+</head>
+<body>
+<nav class="navbar">
+    <div class="container">
+        <a href="/landing/" class="navbar-brand">ShortParse</a>
+        <div class="navbar-links" id="navLinks">
+            <a href="/landing/#skills">功能</a>
+            <a href="/landing/#pricing">价格</a>
+            <a href="/">解析工具</a>
+            <a href="/admin/" target="_blank">管理</a>
+            <a href="/pay/" class="navbar-cta" target="_blank">开始使用</a>
+        </div>
+        <button class="menu-toggle" onclick="document.getElementById('navLinks').classList.toggle('open')">☰</button>
+    </div>
+</nav>
+    <div class="container">
+        <h1>🎬 短视频去水印解析 API</h1>
+        <p class="subtitle">多平台短视频链接解析，返回无水印直链</p>
+
+        <!-- ===== 在线解析工具 ===== -->
+        <div class="card" id="tool-card">
+            <h2>🔧 在线解析</h2>
+            <div class="tool-row">
+                <label>
+                    <span>视频链接</span>
+                    <input class="tool-input" type="text" id="videoUrl" placeholder="粘贴分享文本或链接，自动识别网址...">
+                </label>
+            </div>
+            <div class="tool-row">
+                <label>
+                    <span>身份码</span>
+                    <div class="code-group">
+                        <input class="tool-input" type="text" id="identityCode" placeholder="输入您的身份码（5位）" maxlength="5" style="text-transform:uppercase;letter-spacing:2px;">
+                        <button class="btn btn-save" id="saveCodeBtn" onclick="saveCode()">💾 保存</button>
+                    </div>
+                </label>
+            </div>
+            <div class="parse-btn-row">
+                <button class="btn btn-parse" id="parseBtn" onclick="doParse()">🚀 解析</button>
+            </div>
+            <div class="result-box" id="resultBox">
+                <div id="resultContent"></div>
+            </div>
+        </div>
+
+        <div class="card" style="text-align:center;">
+            <p style="margin-bottom:12px;color:rgba(255,255,255,0.45);">还没有身份码？</p>
+            <a href="/pay/index.php" class="buy-link">💳 购买 / 获取身份码</a>
+        </div>
+
+        <!-- ===== AI Agent 技能安装 ===== -->
+        <div class="card skill-card">
+            <h2>🤖 AI Agent 技能安装</h2>
+            <p class="skill-intro">将提示词发送给 AI 助手（如 Hermes、OpenClaw、LightClaw、workbuddy 等），即可自动安装该技能并使用本站解析短视频功能。</p>
+
+            <!-- SkillHub -->
+            <div class="skill-item">
+                <div><span class="skill-platform">SkillHub</span></div>
+                <div class="skill-link"><a href="https://skillhub.cloud.tencent.com/skills/duanshipinjiexi" target="_blank" rel="noopener">https://skillhub.cloud.tencent.com/skills/duanshipinjiexi</a></div>
+                <div class="prompt-collapse">
+                    <div class="prompt-toggle" onclick="togglePrompt(this)">
+                        <span>查看提示词</span>
+                        <span class="arrow">▼</span>
+                    </div>
+                    <div class="prompt-body">
+                        <div class="prompt-label">📋 安装提示词</div>
+                        <div class="prompt-text">请根据 <span class="hl">https://skillhub.cn/install/skillhub.md</span>，安装 <span class="hl2">duanshipinjiexi</span>。</div>
+                        <div class="skill-actions" style="margin-top:8px;">
+                            <button class="skill-btn" onclick="copyText('请根据 https://skillhub.cn/install/skillhub.md，安装 duanshipinjiexi。')">📋 复制安装提示词</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ClawHub -->
+            <div class="skill-item">
+                <div><span class="skill-platform">ClawHub</span></div>
+                <div class="skill-link"><a href="https://clawhub.ai/kangleizhui/skills/duanshipinjiexi" target="_blank" rel="noopener">https://clawhub.ai/kangleizhui/skills/duanshipinjiexi</a></div>
+                <div class="prompt-collapse">
+                    <div class="prompt-toggle" onclick="togglePrompt(this)">
+                        <span>查看提示词</span>
+                        <span class="arrow">▼</span>
+                    </div>
+                    <div class="prompt-body">
+                        <div class="prompt-label">📋 安装提示词</div>
+                        <div class="prompt-text">Before installing anything, inspect the ClawHub skill metadata and setup requirements.
+If the skill asks you to install a third-party package or CLI, verify its source, maintainer, and package contents before running the install command.
+Install the skill "<span class="hl">一键短视频去水印</span>" (<span class="hl2">@kangleizhui/duanshipinjiexi</span>) from ClawHub only after those checks pass.
+Skill page: <span class="hl">https://clawhub.ai/kangleizhui/skills/duanshipinjiexi</span>
+Keep the work scoped to this skill only.
+After install, help me finish setup from verified skill metadata.
+Use only the metadata you can verify from ClawHub; do not invent missing requirements.
+Ask before making any broader environment changes.</div>
+                        <div class="skill-actions" style="margin-top:8px;">
+                            <button class="skill-btn" onclick="copyPromptClawhub()">📋 复制安装提示词</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📖 使用方法</h2>
+            <div class="example"><code>GET /api/&lt;平台&gt;.php?url=&lt;视频链接&gt;</code></div>
+        </div>
+
+        <div class="card">
+            <h2>🌐 支持平台</h2>
+            <ul class="api-list">
+                <li><span class="api-name">抖音</span> <span class="api-path">/api/douyin/douyin.php?url=...</span> <span class="tag">可用</span></li>
+                <li><span class="api-name">快手</span> <span class="api-path">/api/kuaishou/ksjx.php?url=...</span> <span class="tag">可用</span></li>
+                <li><span class="api-name">小红书</span> <span class="api-path">/api/xiaohongshu/xhsjx.php?url=...</span> <span class="tag">可用</span></li>
+                <li><span class="api-name">皮皮虾</span> <span class="api-path">/api/ppxia.php?url=...</span> <span class="tag">可用</span></li>
+            </ul>
+        </div>
+
+        <div class="card">
+            <h2>⚡ 聚合解析</h2>
+            <p style="color:rgba(255,255,255,0.45);">自动识别视频来源平台：</p>
+            <div class="example"><code>GET /api/parse.php?code=身份码&url=&lt;任意平台视频链接&gt;</code></div>
+        </div>
+
+        <div class="card">
+            <h2>📦 响应格式</h2>
+            <div class="example"><code>{"code":200,"msg":"解析成功","data":{"type":"video","title":"...","url":"https://...","author":{...}}}</code></div>
+        </div>
+
+        <div class="footer">
+            <p>短视频去水印解析 API</p>
+        </div>
+    </div>
+
+    <script>
+    // ===== URL 自动提取 =====
+    function extractUrl(text) {
+        // 匹配 http/https 开头的网址（包括抖音短链等）
+        var match = text.match(/https?:\/\/[^\s\u4e00-\u9fff]+/);
+        return match ? match[0].replace(/[，,。.？?！!、\u2026]+$/, '') : text;
+    }
+
+    // 输入框失焦或输入时自动提取
+    document.addEventListener('DOMContentLoaded', function() {
+        const urlInput = document.getElementById('videoUrl');
+        urlInput.addEventListener('blur', function() {
+            var extracted = extractUrl(this.value);
+            if (extracted !== this.value) this.value = extracted;
+        });
+        urlInput.addEventListener('paste', function() {
+            // 粘贴后延迟执行，等值写入输入框
+            setTimeout(function() {
+                var extracted = extractUrl(urlInput.value);
+                if (extracted !== urlInput.value) urlInput.value = extracted;
+            }, 50);
+        });
+
+        // 自动读取保存的身份码
+        const saved = localStorage.getItem('identity_code');
+        if (saved) {
+            document.getElementById('identityCode').value = saved;
+            document.getElementById('saveCodeBtn').textContent = '✅ 已保存';
+            document.getElementById('saveCodeBtn').className = 'btn btn-saved';
+        }
+
+        // 输入框内容变化时，恢复按钮为"保存"状态
+        document.getElementById('identityCode').addEventListener('input', function() {
+            const saved = localStorage.getItem('identity_code');
+            if (this.value.trim().toUpperCase() !== saved) {
+                const btn = document.getElementById('saveCodeBtn');
+                btn.textContent = '💾 保存';
+                btn.className = 'btn btn-save';
+                btn.disabled = false;
+            }
+        });
+    });
+
+    // ===== 保存身份码到 localStorage（先验证）=====
+    function saveCode() {
+        const code = document.getElementById('identityCode').value.trim().toUpperCase();
+        if (!code) {
+            showToast('请输入身份码', 'error');
+            return;
+        }
+        if (code.length < 4) {
+            showToast('身份码格式不正确', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('saveCodeBtn');
+        btn.textContent = '⏳ 验证中...';
+        btn.disabled = true;
+
+        fetch('/api/identity_info.php?code=' + encodeURIComponent(code))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.code === 200 && data.data && data.data.is_active) {
+                    localStorage.setItem('identity_code', code);
+                    btn.textContent = '✅ 已保存';
+                    btn.className = 'btn btn-saved';
+                    showToast('身份码验证通过 ✅ 已保存到本地', 'success');
+                } else if (data.code === 403) {
+                    btn.textContent = '💾 保存';
+                    btn.className = 'btn btn-save';
+                    btn.disabled = false;
+                    showToast('该身份码已被停用，请更换', 'error');
+                } else {
+                    btn.textContent = '💾 保存';
+                    btn.className = 'btn btn-save';
+                    btn.disabled = false;
+                    showToast('身份码不存在，请检查后重试', 'error');
+                }
+            })
+            .catch(function() {
+                btn.textContent = '💾 保存';
+                btn.className = 'btn btn-save';
+                btn.disabled = false;
+                showToast('网络异常，请稍后重试', 'error');
+            });
+    }
+
+    // ===== 执行解析 =====
+    async function doParse() {
+        const url = document.getElementById('videoUrl').value.trim();
+        let code = document.getElementById('identityCode').value.trim().toUpperCase();
+
+        if (!url) {
+            showToast('请输入视频链接', 'error');
+            return;
+        }
+
+        // 自动提取链接（防止用户忘记等失焦）
+        var extracted = extractUrl(url);
+        if (extracted !== url) {
+            document.getElementById('videoUrl').value = extracted;
+            url = extracted;
+        }
+
+        // 如果没有身份码，尝试从 localStorage 读取
+        if (!code) {
+            code = localStorage.getItem('identity_code');
+            if (code) document.getElementById('identityCode').value = code;
+        }
+
+        if (!code) {
+            showToast('请填写身份码或点击保存使用已保存的', 'error');
+            return;
+        }
+
+        // 显示加载状态
+        const resultBox = document.getElementById('resultBox');
+        const resultContent = document.getElementById('resultContent');
+        resultBox.className = 'result-box show';
+        resultContent.innerHTML = '<div class="result-loading"><span class="spinner"></span>正在解析...</div>';
+
+        try {
+            const resp = await fetch('/api/parse.php?code=' + encodeURIComponent(code) + '&url=' + encodeURIComponent(url));
+            const data = await resp.json();
+            renderResult(data);
+        } catch (e) {
+            resultContent.innerHTML = '<div class="result-error">❌ 网络请求失败：' + e.message + '</div>';
+        }
+    }
+
+    // ===== 格式化数字 =====
+    function fmtNum(n) {
+        if (n >= 10000) return (n/10000).toFixed(1) + 'w';
+        if (n >= 1000) return (n/1000).toFixed(1) + 'k';
+        return n;
+    }
+
+    // ===== 格式化时长 =====
+    function fmtDuration(sec) {
+        if (!sec) return '';
+        sec = Number(sec);
+        var m = Math.floor(sec / 60);
+        var s = Math.floor(sec % 60);
+        return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    // ===== 渲染解析结果 =====
+    function renderResult(data) {
+        const resultContent = document.getElementById('resultContent');
+
+        if (data.code !== 200) {
+            var userMsg = data.msg || '解析失败';
+            // 身份码相关的 403 显示友好提示
+            if (data.code === 403) {
+                userMsg = '身份码不正确，请检查后重试';
+            }
+            resultContent.innerHTML = '<div class="result-error">❌ ' + userMsg + '</div>';
+            return;
+        }
+
+        const d = data.data;
+        let title = d.title || '无标题';
+        let desc = d.desc && d.desc !== d.title ? d.desc : '';
+        let author = d.author || {};
+        let stats = d.stats || {};
+        let type = d.type || 'video';
+        let html = '';
+
+        // ---- 封面图 ----
+        if (d.cover) {
+            html += '<img class="result-cover" src="' + d.cover + '" alt="封面" onerror="this.style.display=\'none\'" loading="lazy">';
+        }
+
+        // ---- 标题 ----
+        html += '<div class="result-title">📹 ' + escapeHtml(title) + '</div>';
+
+        // ---- 类型标签 ----
+        var typeLabel = type;
+        if (type === 'video') typeLabel = '🎬 视频';
+        else if (type === 'image') typeLabel = '🖼️ 图集';
+        else if (type === 'live') typeLabel = '🎞️ 实况/动图';
+        html += '<div class="result-meta"><strong>类型：</strong>' + typeLabel + '</div>';
+
+        // ---- 描述/文案 ----
+        if (desc) {
+            html += '<div class="result-desc">📝 ' + escapeHtml(desc.substring(0, 200)) + (desc.length > 200 ? '...' : '') + '</div>';
+        }
+
+        // ---- 作者信息 ----
+        var authorName = author.name || author.nickname || '';
+        var authorAvatar = author.avatar || '';
+        var authorId = author.id || '';
+        if (authorName || authorAvatar) {
+            html += '<div class="result-author">';
+            if (authorAvatar) {
+                html += '<img class="result-avatar" src="' + authorAvatar + '" alt="" onerror="this.style.display=\'none\'" loading="lazy">';
+            }
+            html += '<span class="aname">' + escapeHtml(authorName) + '</span>';
+            if (authorId) {
+                html += '<span style="color:rgba(255,255,255,0.35);font-size:0.85em;">ID: ' + escapeHtml(authorId) + '</span>';
+            }
+            html += '</div>';
+        }
+        // ---- 统计数据 ----
+        // 兼容 bugpk API: extra.statistics
+        var extraStats = (d.extra && d.extra.statistics) || {};
+        var statItems = [];
+        var liked = (stats.liked_count !== undefined && stats.liked_count !== null) ? stats.liked_count : extraStats.digg_count;
+        if (liked !== undefined && liked !== null) statItems.push(['❤️', '点赞', liked]);
+        var commented = (stats.comment_count !== undefined && stats.comment_count !== null) ? stats.comment_count : extraStats.comment_count;
+        if (commented !== undefined && commented !== null) statItems.push(['💬', '评论', commented]);
+        var shared = (stats.share_count !== undefined && stats.share_count !== null) ? stats.share_count : extraStats.share_count;
+        if (shared !== undefined && shared !== null) statItems.push(['🔄', '分享', shared]);
+        var played = (stats.play_count !== undefined && stats.play_count !== null) ? stats.play_count : extraStats.play_count;
+        if (played !== undefined && played !== null && played > 0) statItems.push(['▶️', '播放', played]);
+        var collected = (stats.collected_count !== undefined && stats.collected_count !== null) ? stats.collected_count : extraStats.collect_count;
+        if (collected !== undefined && collected !== null && collected > 0) statItems.push(['⭐', '收藏', collected]);
+        // duration 值可能来自毫秒（bugpk API 返回 duration_ms）
+        // 如果 extra.duration_ms 存在，说明是毫秒单位
+        var dur = d.duration;
+        if (dur !== undefined && dur !== null && dur > 0) {
+            if (d.extra && d.extra.duration_ms !== undefined) {
+                dur = Math.floor(dur / 1000); // 毫秒转秒
+            }
+            if (dur > 0) {
+                statItems.push(['⏱️', '时长', fmtDuration(dur)]);
+            }
+        }
+
+        if (statItems.length > 0) {
+            html += '<div class="result-stats">';
+            statItems.forEach(function(item) {
+                html += '<span class="stat-item">' + item[0] + ' <span class="num">' + fmtNum(item[2]) + '</span></span>';
+            });
+            html += '</div>';
+        }
+
+        // ---- 音乐信息 ----
+        if (d.music && (d.music.title || d.music.url)) {
+            html += '<div class="result-music">';
+            if (d.music.cover) {
+                html += '<img class="result-music-cover" src="' + d.music.cover + '" alt="" onerror="this.style.display=\'none\'" loading="lazy">';
+            } else {
+                html += '<div class="music-placeholder">🎵</div>';
+            }
+            html += '<div class="result-music-info">';
+            html += '<div class="mlabel">配乐</div>';
+            if (d.music.title) html += '<div class="mtitle">' + escapeHtml(d.music.title) + '</div>';
+            if (d.music.author) html += '<div class="mauthor">' + escapeHtml(d.music.author) + '</div>';
+            html += '</div>';
+            html += '</div>';
+        }
+
+        // ---- 下载链接 ----
+        html += '<div class="result-actions">';
+        if (d.url) {
+            html += '<a href="' + d.url + '" target="_blank" rel="noopener">⬇️ 下载视频</a>';
+        }
+        if (d.cover) {
+            html += '<a href="' + d.cover + '" target="_blank" rel="noopener">🖼️ 下载封面</a>';
+        }
+        if (d.music && d.music.url) {
+            html += '<a href="' + d.music.url + '" target="_blank" rel="noopener">🎵 下载音乐</a>';
+        }
+        if (d.images && d.images.length > 0) {
+            d.images.forEach(function(img, idx) {
+                html += '<a href="' + img + '" target="_blank" rel="noopener">🖼️ 图片' + (idx + 1) + '</a>';
+            });
+        }
+        if (d.live_photo && d.live_photo.length > 0) {
+            d.live_photo.forEach(function(lp, idx) {
+                if (lp.video) {
+                    html += '<a href="' + lp.video + '" target="_blank" rel="noopener">🎞️ 动图' + (idx + 1) + '</a>';
+                }
+            });
+        }
+        html += '</div>';
+
+        // ---- 原始URL ----
+        if (d.url) {
+            html += '<div class="result-url">' + d.url + '</div>';
+        }
+
+        // ---- 剩余次数 ----
+        var remaining = null;
+        if (d.identity_info && d.identity_info.daily_remaining !== null) {
+            remaining = d.identity_info.daily_remaining;
+        } else if (d.key_info && d.key_info.daily_remaining !== null) {
+            remaining = d.key_info.daily_remaining;
+        } else if (d.identity_info && d.identity_info.remaining !== null) {
+            remaining = d.identity_info.remaining;
+        }
+        if (remaining !== null) {
+            html += '<div class="result-meta remaining-count" style="margin-top:8px;"><strong>今日剩余：</strong>' + remaining + ' 次</div>';
+        }
+
+        resultContent.innerHTML = html;
+    }
+
+    // ===== 工具函数 =====
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function showToast(msg, type) {
+        var toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.textContent = msg;
+        document.body.appendChild(toast);
+        setTimeout(function() { toast.remove(); }, 2500);
+    }
+
+    // 回车触发解析
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && (e.target.id === 'videoUrl' || e.target.id === 'identityCode')) {
+            doParse();
+        }
+    });
+
+    // ===== AI 技能：折叠展开 =====
+    function togglePrompt(el) {
+        var body = el.nextElementSibling;
+        var arrow = el.querySelector('.arrow');
+        if (body) {
+            body.classList.toggle('open');
+            if (arrow) arrow.classList.toggle('open');
+        }
+    }
+
+    // ===== AI 技能：复制文本 =====
+    function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() {
+                showToast('✅ 提示词已复制', 'success');
+            }).catch(function() {
+                fallbackCopy(text);
+            });
+        } else {
+            fallbackCopy(text);
+        }
+    }
+
+    function fallbackCopy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try {
+            document.execCommand('copy');
+            showToast('✅ 提示词已复制', 'success');
+        } catch (e) {
+            showToast('❌ 复制失败，请手动选中复制', 'error');
+        }
+        document.body.removeChild(ta);
+    }
+
+    // ===== AI 技能：复制 ClawHub 完整提示词 =====
+    function copyPromptClawhub() {
+        var text = 'Before installing anything, inspect the ClawHub skill metadata and setup requirements.\n' +
+            'If the skill asks you to install a third-party package or CLI, verify its source, maintainer, and package contents before running the install command.\n' +
+            'Install the skill "一键短视频去水印" (@kangleizhui/duanshipinjiexi) from ClawHub only after those checks pass.\n' +
+            'Skill page: https://clawhub.ai/kangleizhui/skills/duanshipinjiexi\n' +
+            'Keep the work scoped to this skill only.\n' +
+            'After install, help me finish setup from verified skill metadata.\n' +
+            'Use only the metadata you can verify from ClawHub; do not invent missing requirements.\n' +
+            'Ask before making any broader environment changes.';
+        copyText(text);
+    }
+    </script>
+</body>
+</html>

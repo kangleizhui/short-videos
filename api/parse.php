@@ -48,17 +48,48 @@ function jsonExit($code, $msg, $data = []) {
 }
 
 // 获取参数
-$key = trim($_REQUEST['key'] ?? '');
+$key = trim($_REQUEST['key'] ?? $_REQUEST['code'] ?? '');
 $key = preg_replace('/[\s
-]+/', '', $key); // 清除空格/换行等干扰字符
+\n]+/', '', $key); // 清除空格/换行等干扰字符
+$key = strtoupper($key); // 统一大小写
 $url = trim($_REQUEST['url'] ?? '');
 $raw_url = trim($_REQUEST['url'] ?? '');
 
-if (empty($key)) jsonExit(400, '缺少参数: key (API密钥)');
 if (empty($url)) jsonExit(400, '缺少参数: url (视频链接)');
 
-// 验证密钥
+// 自动创建身份码（不传key/code时）
 $db = getDB();
+$is_identity_mode = false;
+
+if (empty($key)) {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    $fingerprint = hash('sha256', $ip . '|' . $ua);
+    
+    // 查指纹已有码
+    $st = $db->prepare('SELECT code FROM identities WHERE fingerprint = ? AND is_active = 1 ORDER BY id DESC LIMIT 1');
+    $st->bindValue(1, $fingerprint, SQLITE3_TEXT);
+    $existing = $st->execute()->fetchArray(SQLITE3_ASSOC);
+    if ($existing) {
+        $key = $existing['code'];
+    } else {
+        // 生成新码
+        $chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+        for ($attempt = 0; $attempt < 200; $attempt++) {
+            $c = ''; for ($j = 0; $j < 5; $j++) $c .= $chars[random_int(0, strlen($chars) - 1)];
+            try {
+                $db->exec("INSERT INTO identities (code, is_active, fingerprint, created_at, created_ip) VALUES ('$c', 1, '$fingerprint', datetime('now'), '$ip')");
+                $key = $c;
+                break;
+            } catch (Exception $e) { if (strpos($e->getMessage(),'UNIQUE')===false) throw $e; }
+        }
+        if ($key) {
+            $iid = $db->lastInsertRowID();
+            $db->exec("INSERT INTO identity_benefits (identity_id, type, total_count, used_count, daily_limit, note, created_at) VALUES ($iid, 'free_daily', 0, 0, 10, '免费每日体验', datetime('now'))");
+        }
+    }
+    if (empty($key)) jsonExit(400, '无法创建身份码');
+}
 
 // 创建去重表（60秒内同一密钥+同一链接只计一次）
 $db->exec('CREATE TABLE IF NOT EXISTS request_dedup (dedup_key TEXT PRIMARY KEY, counted_at INTEGER)');
@@ -67,6 +98,110 @@ $stmt = $db->prepare('SELECT * FROM api_keys WHERE key_string = ?');
 $stmt->bindValue(1, $key, SQLITE3_TEXT);
 $result = dbExecRetry($db, $stmt);
 $key_data = $result->fetchArray(SQLITE3_ASSOC);
+
+// 兜底：不在 api_keys 则尝试 identities
+if (!$key_data) {
+    $stmt2 = $db->prepare('SELECT * FROM identities WHERE code = ? AND is_active = 1');
+    $stmt2->bindValue(1, $key, SQLITE3_TEXT);
+    $ident = $stmt2->execute()->fetchArray(SQLITE3_ASSOC);
+    if ($ident) {
+        // 加载该身份下的所有权益
+        $all_benefits = [];
+        $benefits_result = $db->query('SELECT * FROM identity_benefits WHERE identity_id = ' . (int)$ident['id'] . ' ORDER BY id');
+        while ($b = $benefits_result->fetchArray(SQLITE3_ASSOC)) {
+            $all_benefits[] = $b;
+        }
+
+        if (!empty($all_benefits)) {
+            // ──────────────────────────────────────────────
+            // 按优先级选择消费来源：
+            //   包月/包天/永久(不限量) → 免费每日 → 按量
+            // ──────────────────────────────────────────────
+            $target_benefit = null;  // 本次消费要扣费的权益
+
+            // TIER 1: 不限量套餐（monthly/daily/lifetime/lifetime_daily）
+            foreach ($all_benefits as $b) {
+                if (in_array($b['type'], ['monthly', 'daily', 'lifetime', 'lifetime_daily'])) {
+                    if (empty($b['expires_at']) || strtotime($b['expires_at']) > time()) {
+                        $target_benefit = $b;
+                        $target_benefit['_priority'] = 'unlimited';
+                        break;
+                    }
+                }
+            }
+
+            // TIER 2: 免费每日（每日限额未用完）
+            if (!$target_benefit) {
+                foreach ($all_benefits as $b) {
+                    if ($b['type'] === 'free_daily') {
+                        $today = date('Y-m-d');
+                        // 注：key_daily_usage.key_id = identities.id（与 deduct 段一致）
+                        $st_d = $db->prepare('SELECT used_count FROM key_daily_usage WHERE key_id = ? AND date = ?');
+                        $st_d->bindValue(1, $ident['id'], SQLITE3_INTEGER);
+                        $r_d = $st_d->execute()->fetchArray(SQLITE3_ASSOC);
+                        $daily_used = $r_d ? (int)$r_d['used_count'] : 0;
+                        if ($daily_used < $b['daily_limit']) {
+                            $target_benefit = $b;
+                            $target_benefit['_priority'] = 'free_daily';
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // TIER 3: 按量（剩余次数 > 0）
+            if (!$target_benefit) {
+                foreach ($all_benefits as $b) {
+                    if ($b['type'] === 'count') {
+                        if ($b['total_count'] <= 0 || $b['used_count'] < $b['total_count']) {
+                            $target_benefit = $b;
+                            $target_benefit['_priority'] = 'count';
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // TIER 4: 全部用完→给具体错误（不浪费解析资源）
+            if (!$target_benefit) {
+                $exhausted_free_daily = null;
+                $exhausted_count = null;
+                foreach ($all_benefits as $b) {
+                    if ($b['type'] === 'free_daily' && !$exhausted_free_daily) $exhausted_free_daily = $b;
+                    if ($b['type'] === 'count' && !$exhausted_count) $exhausted_count = $b;
+                }
+                if ($exhausted_free_daily) {
+                    jsonExit(429, '今日免费次数已用完（' . $exhausted_free_daily['daily_limit'] . '次/天），请购买套餐获取更多次数');
+                } elseif ($exhausted_count) {
+                    jsonExit(429, '按量次数已用完，请购买套餐');
+                } else {
+                    jsonExit(403, '该身份码无可用权益');
+                }
+            }
+
+            if ($target_benefit) {
+                $priority = $target_benefit['_priority'];
+                $type_label = $priority === 'unlimited' ? 'monthly' : ($priority === 'free_daily' ? 'daily' : 'count');
+
+                $key_data = [
+                    'id' => $ident['id'],
+                    'key_string' => $ident['code'],
+                    'type' => $type_label,
+                    'total_count' => $target_benefit['total_count'] > 0 ? $target_benefit['total_count'] : 999999,
+                    'used_count' => $target_benefit['used_count'],
+                    'daily_limit' => $target_benefit['daily_limit'],
+                    'is_active' => 1,
+                    'is_test' => 0,
+                    'expires_at' => $target_benefit['expires_at'],
+                    'note' => $target_benefit['note'],
+                    '_target_benefit_id' => (int)$target_benefit['id'],
+                    '_priority' => $priority,
+                ];
+                $is_identity_mode = true;
+            }
+        }
+    }
+}
 
 if (!$key_data) jsonExit(403, '密钥无效');
 if (!$key_data['is_active']) jsonExit(403, '密钥已被禁用');
@@ -143,14 +278,15 @@ foreach ($platforms as $name => $cfg) {
 }
 
 if ($matched_api) {
-    $parser_url = 'http://localhost:8080' . $matched_api . '?url=' . urlencode($url);
+    $parser_url = 'https://localhost' . $matched_api . '?url=' . urlencode($url);
     $ch = curl_init();
     curl_setopt_array($ch, [
-        CURLOPT_URL => $parser_url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_SSL_VERIFYPEER => false,
+    CURLOPT_URL => $parser_url,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_TIMEOUT => 30,
+    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_SSL_VERIFYPEER => false,
+    CURLOPT_SSL_VERIFYHOST => 0,
     ]);
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -158,21 +294,7 @@ if ($matched_api) {
 
     $parsed_try = json_decode($response, true);
     if ($http_code != 200 || !$parsed_try || !isset($parsed_try['code']) || $parsed_try['code'] != 200) {
-        $aggregator_url = 'http://localhost:8080/short_videos/sv1.php?url=' . urlencode($url);
-        $ch = curl_init();
-        curl_setopt_array($ch, [
-            CURLOPT_URL => $aggregator_url,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 60,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => false,
-        ]);
-        $response = curl_exec($ch);
-        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-    }
-} else {
-    $aggregator_url = 'http://localhost:8080/short_videos/sv1.php?url=' . urlencode($url);
+    $aggregator_url = 'https://localhost/short_videos/sv2.php?url=' . urlencode($url);
     $ch = curl_init();
     curl_setopt_array($ch, [
         CURLOPT_URL => $aggregator_url,
@@ -180,6 +302,22 @@ if ($matched_api) {
         CURLOPT_TIMEOUT => 60,
         CURLOPT_CONNECTTIMEOUT => 10,
         CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 0,
+    ]);
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    }
+} else {
+    $aggregator_url = 'https://localhost/short_videos/sv2.php?url=' . urlencode($url);
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $aggregator_url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 60,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 0,
     ]);
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -219,9 +357,20 @@ if ($status === 'success') {
         $dedup_counted = true;  // 已计过，跳过
     } else {
         // 首次计费或距上次已过60秒
-        $stmt = $db->prepare('UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?');
-        $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
-        dbExecRetry($db, $stmt);
+        if ($is_identity_mode) {
+            // 所有套餐都累加 used_count，不限量套餐也记录调用次数
+            $priority = $key_data['_priority'] ?? '';
+            $benefit_id = $key_data['_target_benefit_id'] ?? 0;
+            if ($benefit_id > 0) {
+                $stmt = $db->prepare('UPDATE identity_benefits SET used_count = used_count + 1 WHERE id = ?');
+                $stmt->bindValue(1, $benefit_id, SQLITE3_INTEGER);
+                dbExecRetry($db, $stmt);
+            }
+        } else {
+            $stmt = $db->prepare('UPDATE api_keys SET used_count = used_count + 1 WHERE id = ?');
+            $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+            dbExecRetry($db, $stmt);
+        }
     }
 
     if (!$dedup_counted) {
@@ -230,6 +379,15 @@ if ($status === 'success') {
             $stmt->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
             $stmt->bindValue(2, $today, SQLITE3_TEXT);
             dbExecRetry($db, $stmt);
+        }
+
+        // 同步写入 dashboard 读的 daily_usage（identity 模式必写，不限量套餐也能显示调用量）
+        if ($is_identity_mode) {
+            $stmt2 = $db->prepare('INSERT INTO daily_usage (identity_id, benefit_id, date, used_count) VALUES (?, ?, ?, 1) ON CONFLICT(identity_id, benefit_id, date) DO UPDATE SET used_count = used_count + 1');
+            $stmt2->bindValue(1, $key_data['id'], SQLITE3_INTEGER);
+            $stmt2->bindValue(2, $benefit_id, SQLITE3_INTEGER);
+            $stmt2->bindValue(3, $today, SQLITE3_TEXT);
+            dbExecRetry($db, $stmt2);
         }
 
         if ($key_data['is_test']) {
@@ -283,109 +441,16 @@ $parsed['key_info'] = [
     'expires_at' => $key_data['expires_at'],
 ];
 
-// ==========================================
-// ⚡ 异步合成动图(Live Photo) — 带重复请求保护
-// ==========================================
-$do_synthesize = isset($parsed['data']['type']) 
-    && $parsed['data']['type'] === 'live'
-    && isset($parsed['data']['live_photo']) 
-    && count($parsed['data']['live_photo']) > 0;
-
-if ($do_synthesize) {
-    $lp = $parsed['data']['live_photo'][0];
-    $video_url = $lp['video'] ?? '';
-    $image_url = $lp['image'] ?? '';
-    $music_url = $parsed['data']['music']['url'] ?? '';
-    
-    if ($video_url && $image_url) {
-        @mkdir('/tmp/synth_jobs', 0755, true);
-        @mkdir('/tmp/synth_locks', 0755, true);
-        
-        // 用 video_url+image_url 的 hash 做去重锁
-        $lock_key = md5($video_url . $image_url);
-        $lock_dir = "/tmp/synth_locks/{$lock_key}";
-        $lock_info = "/tmp/synth_locks/{$lock_key}.info";
-        $job_id = '';
-        $spawn_new = false;
-        
-        if (is_dir($lock_dir)) {
-            $existing_job = @file_get_contents($lock_info);
-            $lock_time = filemtime($lock_dir);
-            $age = time() - $lock_time;
-            
-            if ($existing_job && $age < 300) {
-                $job_id = trim($existing_job);
-                $result_file = "/tmp/synth_jobs/{$job_id}.result";
-                if (file_exists($result_file)) {
-                    $res = json_decode(file_get_contents($result_file), true);
-                    if ($res && $res['code'] === 202) {
-                        // 还在处理中，复用 job_id
-                        $spawn_new = false;
-                    } elseif ($res && $res['code'] === 200) {
-                        // 已完成，可以重新 spawn
-                        $spawn_new = true;
-                    } else {
-                        $spawn_new = true;
-                    }
-                } else {
-                    $spawn_new = true;
-                }
-            } else {
-                // 锁过期
-                @rmdir($lock_dir);
-                @unlink($lock_info);
-                $spawn_new = true;
-            }
-        } else {
-            $spawn_new = true;
-        }
-        
-        if ($spawn_new) {
-            $job_id = uniqid('', true);
-            // 原子锁：mkdir 失败说明别的请求刚创建了锁
-            if (@mkdir($lock_dir, 0755)) {
-                file_put_contents($lock_info, $job_id);
-                
-                $esc_key = escapeshellarg($key);
-                $esc_mus = escapeshellarg($music_url);
-                $script = __DIR__ . '/async_job_handler.php';
-                
-                // 启动后台进程，不阻塞
-                // 🔁 图片URL先走 CF Workers 代理（让后台合成也能下）
-                if (isset($parsed['data']['images']) && is_array($parsed['data']['images'])) {
-                    $cf_proxy_base = 'https://svproxy.kcucu.com/?mediatype=image';
-                    $proxy_fn = function($url) use ($cf_proxy_base) {
-                        if (empty($url)) return $url;
-                        return $cf_proxy_base . '&proxyurl=' . base64_encode($url);
-                    };
-                    foreach ($parsed['data']['images'] as $k => $v) {
-                        $parsed['data']['images'][$k] = $proxy_fn($v);
-                    }
-                    foreach ($parsed['data']['live_photo'] as $k => $v) {
-                        if (!empty($v['image'])) {
-                            $parsed['data']['live_photo'][$k]['image'] = $proxy_fn($v['image']);
-                        }
-                    }
-                }
-                // 写入素材列表：live_photo + 所有 images
-                $synth_data = [
-                    'live_photo' => $parsed['data']['live_photo'] ?? [],
-                    'images' => $parsed['data']['images'] ?? [],
-                ];
-                file_put_contents("/tmp/synth_jobs/{$job_id}.photos.json", json_encode($synth_data, JSON_UNESCAPED_UNICODE));
-                
-                exec("php {$script} {$job_id} {$esc_key} {$esc_mus} > /dev/null 2>&1 &");
-            } else {
-                // 另一个请求刚创建了锁，读它的 job_id
-                $existing_job = @file_get_contents($lock_info);
-                if ($existing_job) $job_id = trim($existing_job);
-            }
-        }
-        
-        $parsed['data']['synthesized_url'] = null;
-        $parsed['data']['synthesize_job_id'] = $job_id;
-        $parsed['data']['synthesize_status'] = 'processing';
-    }
+// 身份码模式：额外返回 identity_info
+if ($is_identity_mode) {
+    $parsed['identity_info'] = [
+        'code' => $key,
+        'is_new' => false,
+        'plans' => [$key_data['type'] === 'daily' ? '免费每日' : ($key_data['type'] === 'monthly' ? '包月' : '按次')],
+        'remaining' => $remaining,
+        'daily_remaining' => $daily_remaining,
+        'expires_at' => $key_data['expires_at'],
+    ];
 }
 
 // ==========================================

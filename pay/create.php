@@ -19,12 +19,24 @@ $count = intval($input['count'] ?? 0);
 $days = intval($input['days'] ?? 0);
 $daily_limit = intval($input['daily_limit'] ?? 0);
 $price = floatval($input['price'] ?? 0);
+$identity_code = strtoupper(trim($input['identity_code'] ?? ''));
 
 if (!$plan_id || !$plan_name || !$plan_type || $price <= 0) {
     jsonExit(400, '套餐参数不完整');
 }
+if (empty($identity_code)) {
+    jsonExit(400, '缺少身份码');
+}
 
 $db = getDB();
+
+// 验证身份码是否存在
+$st = $db->prepare("SELECT id FROM identities WHERE code = ? AND is_active = 1");
+$st->bindValue(1, $identity_code, SQLITE3_TEXT);
+$ident = $st->execute()->fetchArray(SQLITE3_ASSOC);
+if (!$ident) {
+    jsonExit(400, '身份码无效或已被禁用');
+}
 $alipay = new Alipay();
 
 // 生成订单号
@@ -43,8 +55,8 @@ try {
     
     $qr_code = $result['qr_code'];
     
-    // 保存订单到数据库
-    $stmt = $db->prepare("INSERT INTO orders (order_id, plan_type, plan_name, amount, total_count, expires_days, key_type, daily_limit, note, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    // 保存订单到数据库（含身份码）
+    $stmt = $db->prepare("INSERT INTO orders (order_id, plan_type, plan_name, amount, total_count, expires_days, key_type, daily_limit, note, status, identity_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     $stmt->bindValue(1, $out_trade_no, SQLITE3_TEXT);
     $stmt->bindValue(2, $plan_id, SQLITE3_TEXT);
     $stmt->bindValue(3, $plan_name, SQLITE3_TEXT);
@@ -55,6 +67,7 @@ try {
     $stmt->bindValue(8, $daily_limit, SQLITE3_INTEGER);
     $stmt->bindValue(9, "{$plan_name} 订单", SQLITE3_TEXT);
     $stmt->bindValue(10, 'pending', SQLITE3_TEXT);
+    $stmt->bindValue(11, $identity_code, SQLITE3_TEXT);
     $stmt->execute();
     
     echo json_encode([
@@ -66,10 +79,4 @@ try {
     
 } catch (Exception $e) {
     jsonExit(500, $e->getMessage());
-}
-
-function jsonExit($code, $msg) {
-    http_response_code($code);
-    echo json_encode(['success' => false, 'error' => $msg], JSON_UNESCAPED_UNICODE);
-    exit;
 }

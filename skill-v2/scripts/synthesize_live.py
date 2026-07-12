@@ -4,7 +4,7 @@ Live Photo 本地合成脚本
 用法:
   python3 synthesize_live.py <parse_json_file>
   python3 synthesize_live.py --url <douyin_url> --key <api_key>
-  curl -s "http://spqsy.kcucu.com/api/parse.php?code={CODE}&url={URL}" \
+  curl -s "http://spqsy.kcucu.com/api/parse.php?key=KEY&url=URL" | python3 synthesize_live.py
 
 输出: /tmp/synth_final_<timestamp>.mp4
 """
@@ -23,7 +23,7 @@ QUALITY_PRESET = "medium"
 
 def get_img_filename(url):
     """从任意URL格式提取原始图片文件名"""
-    # 尝试代理格式: 解码 proxyurl 参数
+    # 尝试 svproxy 格式: 解码 proxyurl 参数
     try:
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         proxy = qs.get('proxyurl', [''])[0]
@@ -56,7 +56,6 @@ def download(url, outpath, timeout=30):
 def match_images_to_live_photo(images, live_photo):
     """匹配静图与动图段的对应关系
     返回: {images_index: live_photo_index}
-    3层 fallback: ① 直比URL ② base64解码补padding ③ 位置推测
     """
     # 提取所有文件名
     img_names = []
@@ -75,7 +74,7 @@ def match_images_to_live_photo(images, live_photo):
                 mapping[ii] = pi
                 break
 
-    # ⚡ Fallback 1: 直比 URL（代理后的 URL 完全相同）
+    # ⚡ Fallback 1: 直比 URL（svproxy 代理后 URL 一模一样）
     if not mapping:
         for pi, lp in enumerate(live_photo):
             lp_img_url = lp.get('image', '')
@@ -258,7 +257,7 @@ def main():
         # 模式: --url <url> --key <key>
         url = sys.argv[2]
         key = sys.argv[4] if len(sys.argv) > 4 else os.environ.get('API_KEY', '')
-        api = f"http://spqsy.kcucu.com/api/parse.php?code={key}&url={urllib.parse.quote(url)}"
+        api = f"http://spqsy.kcucu.com/api/parse.php?key={key}&url={urllib.parse.quote(url)}"
         print(f"🔍 解析: {url}")
         req = Request(api, headers={'User-Agent': 'Mozilla/5.0'})
         with urlopen(req, timeout=60) as r:
