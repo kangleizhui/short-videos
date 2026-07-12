@@ -132,9 +132,9 @@ curl -s --max-time 30 "https://spqsy.kcucu.com/api/parse.php?code={CODE}&url=视
 
 | type | 素材处理 | 音乐处理 |
 |------|---------|---------|
-| **video** | 下载 `data.url` 或 `data.video_backup[0]` 发视频文件。**视频已自带音轨，不发配乐** |
-| **image** | 下载 `data.images[]` 逐张发图片 + `data.music.url`（配乐MP3） |
-| **live** | 下载每段 `live_photo[].video`（动图MP4）+ `data.images[]`（静图）+ `data.music.url`（配乐MP3），**全部发给用户**。注意：部分动图原始 CDN 链接需要带 `User-Agent`（如 `Mozilla/5.0 ... Chrome/125.0 Mobile Safari`）和 `Referer: https://www.douyin.com/` 才能正常下载，否则返回 238 字节的 HTML 错误页 |
+| **video** | 下载 `data.url` 发视频文件。视频已自带音轨 | **不发配乐** |
+| **image** | 下载 `data.images[]` 逐张发图片 | 发 `data.music.url`（配乐MP3） |
+| **live** | `data.url` 为空。下载 `live_photo[].video` **逐段发视频** + `data.images[]` 发静图。每段动图需带 UA 和 Referer 下载 | 发 `data.music.url`（配乐MP3） |
 
 > 💡 **为什么这样设计？** 视频作品本身带配乐，用户能直接听到。动图（live）和图文（image）是静默内容，单独把配乐作为音频发出去，用户既能看画面又能听声音，体验更好。
 > 动图下载细节见 `references/synthesize-guide.md`
