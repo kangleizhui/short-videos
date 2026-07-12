@@ -19,9 +19,28 @@ GET /api/create_identity.php
 ```json
 {
   "code": 200,
-  "data": {}
+  "data": {
+    "identity_code": "X7K3M",
+    "daily_limit": 10,
+    "is_new": false
+  }
 }
 ```
+
+也可指定自定义码：
+
+```bash
+GET /pay/identity.php?code=MYCODE
+```
+
+```json
+{
+  "code": 200,
+  "data": {
+    "identity_code": "MYCODE",
+    "is_new": true
+  }
+}
 
 ## 2. 解析视频
 
