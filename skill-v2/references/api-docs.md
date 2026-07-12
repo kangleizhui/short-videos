@@ -1,24 +1,34 @@
-# API 文档 — 身份码版
+# API 文档
 
-> Base URL: `http://spqsy.kcucu.com`
-> 身份码 = 5位大写字母数字，首次调用自动生成
+> Base URL: `https://spqsy.kcucu.com`
+> 所有身份码参数大小写不敏感，大小写完全等价
 
-## 核心变化（v1.0.28+）
+## 🆔 身份码系统
 
-- ❌ 再无长密钥 `XXXX-XXXX-XXXX-XXXX-XXXX`
-- ❌ 再无固定测试密钥 `TEST1-...`
-- ✅ 5位身份码：`X7K3M`，简洁不易截断
-- ✅ 首次调用无需身份码，API 自动生成
-- ✅ 所有操作使用**同一个身份码**，购买叠加权益
+身份码是5位字母数字，永久不变。所有操作绑定同一个身份码：
+- 首次调用自动生成，每天免费10次
+- 购买套餐后同一身份码叠加权益
+- 可以随时修改身份码（换好记的码）
 
-## 1. 解析视频（首次调用）
+## 1. 创建身份码（无需视频链接）
 
 ```bash
-# 首次调用：不传 key，自动生成5位身份码
-GET /api/parse.php?url=https://v.douyin.com/xxx/
+GET /api/create_identity.php
+```
 
-# 后续调用：用已有身份码
-GET /api/parse.php?key=X7K3M&url=https://v.douyin.com/xxx/
+```json
+{
+  "code": 200,
+  "data": {}
+}
+```
+
+## 2. 解析视频
+
+```bash
+GET /api/parse.php?code={身份码}&url={链接}
+# 首次调用可不传 code，自动生成身份码
+GET /api/parse.php?url={链接}
 ```
 
 ### 响应 JSON
@@ -27,127 +37,132 @@ GET /api/parse.php?key=X7K3M&url=https://v.douyin.com/xxx/
 {
   "code": 200,
   "data": {
-    "type": "video",
-    "title": "标题",
-    "author": {"name": "作者名"},
-    "url": "https://...",
-    "images": ["https://..."],
-    "live_photo": [{"video": "...", "image": "..."}],
-    "music": {"title": "歌名", "author": "歌手", "url": "https://..."},
-    "stats": {"liked": "12.3w", "comment": "4567", "share": "890"}
+    "type": "",
+    "title": "",
+    "author": {},
+    "url": "",
+    "video_backup": [],
+    "images": [],
+    "live_photo": [],
+    "music": {},
+    "stats": {}
   },
   "identity_info": {
-    "code": "X7K3M",
-    "is_new": true,
-    "plans": ["免费每日"],
+    "is_new": false,
+    "daily_remaining": 0,
     "remaining": null,
-    "daily_remaining": 10,
-    "expires_at": null
+    "plans": []
   }
 }
 ```
 
-### identity_info 字段说明
+### 关键字段
 
 | 字段 | 说明 |
 |------|------|
-| `code` | 5位身份码 |
-| `is_new` | true=首次生成的新身份码 |
-| `plans` | 当前生效的套餐列表 |
-| `remaining` | 计次剩余次数（null=无限制） |
-| `daily_remaining` | 今日剩余免费次数 |
-| `expires_at` | 到期时间（null=永不过期） |
+| data.type | video=视频, image=图片, live=动图 |
+| data.url | 视频直链（video 类型） |
+| data.images[] | 所有静图 URL，可直接 `curl` 下载 |
+| data.live_photo[] | 动图素材：每段有 video(MP4) + image(静图)。**下载 video 需带 User-Agent 和 Referer** |
+| data.music.url | 配乐链接（可直接下载） |
+| data.stats | 互动数据：liked/comment/share/collect |
+| identity_info.daily_remaining | 今日剩余次数 |
+| identity_info.remaining | 计次剩余次数 |
 
 ### 错误码
 
 | HTTP | msg | 说明 |
 |------|-----|------|
 | 400 | 缺少参数: url | 未传视频链接 |
-| 403 | 身份码无效 | 身份码不存在 |
-| 429 | 今日调用次数已达上限 | 每天10次已用完 |
-| 500 | 解析服务异常 | 内部错误 |
+| 403 | 身份码无效 | 身份码不存在或已停用 |
+| 429 | 今日调用次数已达上限 | 免费每日10次用完，或所有权益耗尽 |
+| 500 | 解析服务异常 | 服务器异常，重试一次 |
 
-## 2. 身份码信息查询（零消耗）
+## 3. 修改身份码
 
 ```bash
-GET /api/identity_info.php?code=X7K3M
+POST /api/modify_identity.php
+Content-Type: application/x-www-form-urlencoded
+
+old_code=原身份码&new_code=新身份码
 ```
+
+规则：5位数字+字母，大小写不敏感，60秒防抖。权益全部保留。
+
+| HTTP | 含义 |
+|------|------|
+| 200 | 修改成功 |
+| 400 | 参数缺失 / 格式错误 |
+| 404 | 旧身份码不存在 |
+| 403 | 旧身份码已停用 |
+| 409 | 新码已被占用 |
+| 429 | 操作太频繁 |
+
+## 4. 查身份码状态
+
+```bash
+GET /api/identity_info.php?code={身份码}
+```
+
+零消耗，返回完整权益信息：
 
 ```json
 {
   "code": 200,
   "data": {
-    "code": "X7K3M",
     "is_active": true,
-    "plans": ["免费每日", "计次"],
-    "benefits": [
-      {"type": "free_daily", "daily_limit": 10, "note": "免费每日体验"},
-      {"type": "count", "total_count": 50, "used_count": 3}
-    ],
-    "remaining": 47,
-    "daily_remaining": 8,
-    "daily_used_today": 2,
+    "plans": [],
+    "remaining": null,
+    "daily_remaining": 0,
+    "daily_used_today": 0,
     "expires_at": null
   }
 }
 ```
 
-## 3. 下单
+## 5. 下单
 
 ```bash
 POST /pay/create.php
 Content-Type: application/json
 
-{"id": "count_10", "name": "体验套餐", "type": "count", "count": 10, "price": 0.50}
-
-# 如果用户已有身份码，传入叠加：
-{"id": "count_50", "name": "按次 50次", "type": "count", "count": 50, "price": 9.90, "identity_code": "X7K3M"}
+{"identity_code": "{身份码}", "id": "count_10", "name": "体验套餐", "type": "count", "count": 10, "price": 0.50}
 ```
 
 ```json
 {"success": true, "order_id": "SV20260707XXXX", "qr_code": "https://qr.alipay.com/xxx", "amount": 0.50}
 ```
 
-⚠️ 收到 `qr_code` 后必须 `qrencode -o /tmp/qr.png "URL"` 生成二维码图片。
+⚠️ 收到 `qr_code` 后必须 `qrencode -o /tmp/qr.png "URL"` 生成二维码图片发 MEDIA。禁止直接发链接。
 
-## 4. 查支付状态
-
-```bash
-GET /pay/query.php?order_id=SV20260707XXXX
-```
-
-```json
-{
-  "success": true,
-  "status": "paid",
-  "identity_code": "X7K3M",
-  "identity_info": {
-    "code": "X7K3M",
-    "plans": ["计次"],
-    "remaining": 10,
-    "daily_remaining": null,
-    "expires_at": null
-  }
-}
-```
-
-### identity_info 各类型展示
-
-| plans | 展示 |
-|-------|------|
-| 免费每日 | `今日剩余 8/10 次（免费）` |
-| 计次 | `剩余 47 次` |
-| 包月 | `不限总次数，还剩约22天` |
-| 永久 | `不限总次数，永不过期` |
-
-## 5. 套餐列表
+### 套餐列表
 
 ```bash
 GET /pay/plans.php
 ```
 
-## 6. CDN 代理下载
+动态获取，以实时返回为准。
+
+## 6. 查支付状态
 
 ```bash
-GET /api/svproxyurl.php?proxyurl=<base64_url>&type=<type>
+GET /pay/query.php?order_id=SV20260707XXXX
+```
+
+| status | 含义 |
+|--------|------|
+| `paid` | ✅ 已支付，权益已绑定到身份码 |
+| `pending` | ⏳ 等待支付 |
+| `closed` | ❌ 已关闭 |
+
+支付成功后用 `identity_info.php` 确认权益到账。
+
+## 7. 购买时生成身份码
+
+用户购买后可能要一个新的身份码来接收套餐：
+
+```bash
+GET /pay/identity.php?code=用户自定义码
+# 或自动生成
+GET /pay/identity.php
 ```

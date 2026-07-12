@@ -1,153 +1,180 @@
 ---
 name: duanshipinjiexi
-description: 一站式视频解析去水印工具，全面覆盖抖音、快手、B站、小红书、皮皮虾、微博、头条等主流内容平台，仅针对平台自带水印解析下载纯净视频，无需复杂操作、无需繁琐剪辑，一键智能去除视频平台标识水印，全程无损解析素材画质，去水印后画面清晰无模糊、无痕迹、无压缩，完整保留原视频画质观效，操作简单高效，快速提取无水印原版视频，适配日常收藏优质内容与二次创作素材整理。首次调用自动生成5位身份码，每天免费试用10次，后续购买同一身份码叠加权益。支持自动完成套餐展示、下单、支付、交付身份码全流程。
-version: 1.0.28
-variables:
-  DOMAIN: "spqsy.kcucu.com"
-  PORT: "8080"
+slug: duanshipinjiexi
+displayName: 一键短视频去水印
+description: 一站式视频解析去水印工具，全面覆盖抖音、快手、小红书、皮皮虾4大主流内容平台，仅针对平台自带水印解析下载剪辑，一键智能去除视频平台标识水印，全程无损解析素材画质，去水印后画面清晰无模糊、无痕迹、无压缩，完整保快速提取无水印原版视频，适配日常收藏优质内容与二次创作素材整理。
+version: 1.1.0
+summary: 一键智能去除视频平台标识水印，支持抖音/快手/小红书/皮皮虾。免费每日额度用完自动扣按量计次，包月到期自动回退免费。
+license: MIT
 when_to_use:
-  - 用户发来抖音/快手/B站/小红书/皮皮虾/微博等短视频链接要求解析
+  - 用户发来抖音/快手/小红书/皮皮虾等短视频链接要求解析
+  - 用户直接给了你一个身份码（不论谁创建的） ← 直接用，不创建/修改
   - 用户询问套餐或身份码相关
   - 用户要求购买套餐
-key_manager: true  # AI 自动管理身份码权益切换
+  - 用户告知已支付，需要查状态并交付身份码
+  - 用户想修改身份码（换一个更好记的码）
 ---
 
-# 短视频去水印解析 — 自动合成 & 身份码交付
+# 短视频去水印解析
 
-> Base URL = `http://{DOMAIN}:{PORT}`
-> 身份码 = 5位大写字母数字，首次调用 API 自动生成，后续一直用同一个
-> 免费体验：每天10次，无需测试密钥，直接发链接即可自动获得身份码（响应中 `identity_info.code`）
+> Base URL: `https://spqsy.kcucu.com`
 
-AI 通过调用后端 API 完成视频解析、动图合成、套餐展示和身份码交付。技术细节见 `references/api-docs.md`，支付流程说明见 `references/payment-flow.md`。
+## 🆔 身份码
 
-## 核心能力
+5位大写字母数字，**永久不变**，所有操作绑定同一个码。大小写不敏感。
 
-1. **解析视频** — 输入短视频链接，返回标题、作者、互动数据、无水印视频直链
-2. **图片自动代理** — `parse.php` 返回的 `images[]`/`cover`/`avatar` 全部经过 CF Workers(`svproxy.kcucu.com`) 代理，AI 直接 `curl` 即可下载，无需额外处理
-3. **动图本地合成（推荐）** — 检测到动图内容时，在 AI 本地用 ffmpeg 合成，不占服务器资源
-4. **动图服务端合成（fallback）** — 本地无 ffmpeg 时，自动降级到服务器异步合成
-5. **套餐展示与身份码交付** — 展示套餐列表、创建订单、查支付状态、交付身份码（含身份码详情 `identity_info`）
-6. **订单查询** — AI 可调用 `query.php` 查订单支付状态，已支付时返回身份码详情
-7. **身份码信息查询** — 随时查任意身份码的剩余次数、到期时间和权益状态，不消耗次数（`GET /api/identity_info.php?code=XXXXX`）
+身份码支持**多设备多AI共用**，不存在"被占用"概念。AI 按以下三个场景区分处理，**不要串流程**：
 
-## FFmpeg 安装（全平台支持）
+---
 
-动图合成需要 ffmpeg，AI 先检查本地是否已安装：
+### 场景一：用户给了码 → 直接用
+
+用户对话中明确给了你一个身份码 → 直接当参数传，**不创建、不修改、不替换**。同时**保存到记忆**，之后所有调用用这个码，不再自动创建。
+
+> ⚠️ 如果AI之前已自建过码，用户给的码**覆盖记忆**（优先级：用户给码 > AI自建）。旧的码还在服务器上，只是AI不再用它。
 
 ```bash
-ffmpeg -version
+GET /api/parse.php?code={用户给的码}&url=链接
 ```
 
-如果未安装，按系统安装：
-
-| 系统 | 命令 |
-|------|------|
-| Linux (Debian/Ubuntu) | `apt-get install -y ffmpeg` |
-| Linux (CentOS/RHEL) | `yum install -y ffmpeg` |
-| macOS | `brew install ffmpeg` |
-| Windows | `winget install ffmpeg` 或 https://ffmpeg.org/download.html |
-
-> 安装失败或不允许安装时，自动降级到服务端合成。
-
-## 操作流程
-
-用户发来链接后，AI 只执行一次，完成后结束：
-
-1. 调用 API 解析链接（首次调用自动获得5位身份码）
-2. **发文字消息**（标题、作者、平台、类型、互动数据、身份码和剩余信息）
-3. **处理视频/图片/动图**（见下方各类型处理方式）
-4. 结束，不做后续追加
-
-> 🔑 **设计原则：项目级修复 > AI 级兜底**
-> 1. 当 API 返回的媒体（图片/视频）无法直接下载时，先在项目层面加代理层解决（如 CF Workers），而不是给 AI 加一堆"加Referer下载/CDP截图/发链接"的绕路方案。
-> 2. **解析器后端接口必须 Nginx 层面锁定** — 平台解析器（douyin.php 等）不带身份码鉴权，必须只允许 localhost 访问，否则任何人都可以绕过 parse.php 直接白嫖。
-
-### 各类型处理方式
-
-| type | 操作 |
-|------|------|
-| **video** | 下载视频 URL 到本地，发 MEDIA:/tmp/xxx.mp4 |
-| image | 图片链接已自动走 CF Workers 代理，直接 `curl -o img.jpg "URL"` 即可 |
-| **live** | **优先本地 ffmpeg 合成**，失败则降级服务端 |
-
-> ⚠️ **🔴🔴🔴 绝对规则 🔴🔴🔴**
-> **所有 `ffmpeg -ss` 参数必须是 `0`！所有！每一段！**
-> ❌ 反例：`-ss 3`、`-ss 6`、`-ss 12` → 每段开头不同 → 切换时画面突变 = "闪"
-> ✅ 正解：`-ss 0` → 全部从同一画面开头 → 视觉连续顺滑
-> 这条错了合成就是废的，没有例外。
-
-> ⚠️ **🔴🔴🔴 第二条铁律 🔴🔴🔴**
-> **必须把 `data.images[]` 中所有图片作为静图段合进去！**
-> `live_photo[].image` 只是 `images[]` 的子集（通常9张图但只标3段live_photo）
-> ❌ 错误做法：只用 live_photo 对应的3张静图 → 漏掉其他6张
-> ✅ 正确做法：每个周期 = 1段动图 + **ALL images[]** 静图
-> **只有 live_photo[].video 才是真正的动图素材，images[] 里的全是静图**
-
-检测到 `type=live` 时，**优先在 AI 本地用 ffmpeg 合成**，流程：
-
-1. **从 parse.php 返回的 `data.live_photo[]` 取出所有动图段**（每段含 `video`=动图URL + `image`=关联静图URL）
-2. **从 `data.images[]` 取出所有静图**（全部9张都要展示）
-3. 下载所有素材到本地 `/tmp/`
-4. 运行 ffmpeg 合成，**按 `images[]` 的原始下标顺序遍历**
-5. 发送合成好的视频给用户
-
-**合成顺序（关键！）：**
-```
-每个周期（重复3次）：
-  images[0] 静图 → 如有 motion[pi] 匹配 images[0] 则先播动图
-  images[1] 静图 → ...
-  ...一直到 images[N-1]
-```
-
-完整 ffmpeg 合成示例见 `references/synthesize-guide.md`。
-
-### 🎯 动图（live type）— 服务端合成（fallback）
-
-如果 AI 本地无法安装 ffmpeg，自动切换服务器异步合成：
-
-1. parse.php 返回 synthesized_url=null, synthesize_job_id="xxx", synthesize_status="processing"
-2. **先发文字消息**给用户
-3. 每3-5秒调一次 check_job.php?code=XX&job_id=XX
-4. 轮询直到返回 code=200 且 data.url 有值
-5. 下载合成视频发 MEDIA:/tmp/xxx.mp4
-6. 若连续120秒仍返回 code=202，改发原视频
-
-身份码提示规则：
-- 免费身份码 → `📊 今日免费剩余：X次（每天10次）`
-- 付费计次 → `📊 剩余：X次`
-- 时长/永久 → 不显示剩余
-
-## 获取身份码
-
-- **免费体验** — 直接调用 API（不传 key 或传空 key），服务端自动生成5位身份码并返回，每天10次
-- **购买套餐** — 用户发送"套餐"查看可选方案，选择后 AI 下单并生成二维码图片，用户扫码支付后同一身份码自动叠加权益
-
-> ⚠️ 下单后必须生成二维码图片发给用户，禁止直接发支付宝链接。创建订单返回 `qr_code` URL，用 `qrencode -o /tmp/qr.png "{qr_code}"` 生成二维码图片，然后用 `send_message` 发 `MEDIA:/tmp/qr.png`。
+> ⚠️ 同一个码给多个AI用时，每个AI各自直接调用即可，不要试图"占有"这个码。
+> 身份码是共享资源，谁拿到谁用，不存在归属概念。
 
 ---
 
-## 🔑 身份码使用规则（简化版）
+### 场景二：用户没给码 → AI自动创建
 
-**API 返回的 `identity_info` 已经告诉你一切，AI 只管读：**
+首次调用不传code → 自动生成新码并保存到记忆。
 
-```json
-// 免费身份码
-{"daily_remaining": 8}       → "📊 今日免费剩余：8次（每天10次）"
-// 付费计次
-{"remaining": 42}            → "📊 剩余：42次"
-// 时长/永久身份码
-{"remaining": null}           → 不显示剩余
-// 今日免费已用完
-{"daily_remaining": 0}        → "📊 今日免费次数已用完，明天再试或购买套餐"
+```bash
+# 方式一：专用接口
+GET /api/create_identity.php
+
+# 方式二：不传code直接解析（自动生成+解析一步到位）
+GET /api/parse.php?url=视频链接
 ```
 
-**AI 只需要做到：**
+> **AI必须从响应中提取身份码保存到记忆/上下文**，后续所有调用都用它。
+> 系统按IP+UA指纹防重，同一工具只会返回同一个码。
 
-1. **始终使用同一个身份码** — 首次调用 API 返回的 `identity_info.code` 即为你的身份码，永久有效
-2. **开始对话** → 用已知的身份码调用 API，如无则首次自动生成
-3. **用户买了套餐** → 查支付结果，拿到身份码确认权益已叠加
-4. **调用失败（403 / 429）** → 按 `msg` 区分处理：
-   - `msg` 含 **"身份码无效"** → 身份码不存在或被禁用
-   - HTTP **429** → 每日10次已用完，引导购买套餐
-   - ⚠️ 403/429 返回体不含 `identity_info`
-5. **身份码提示按 `identity_info` 显示**
+---
+
+### 场景三：用户主动要求改码
+
+**只有**用户明确说"改码/换码/修改身份码"时才走修改流程：
+
+```bash
+POST /api/modify_identity.php
+Content-Type: application/x-www-form-urlencoded
+
+old_code=原码&new_code=新码
+```
+
+规则：5位数字+字母，不能重复，60秒防抖，权益余额全部跟新码。
+
+---
+
+### 查状态（零消耗）
+
+```bash
+GET /api/identity_info.php?code={身份码}
+```
+
+返回剩余次数、每日限额、到期时间。
+
+> **权益优先级详见** `references/key-rules.md`
+
+> ⚠️ **动图/图文配乐**：`live`（动图）和 `image`（图文）类型都需配乐。详见下方「处理不同 type」表格，按 type 选择素材+音乐组合。
+
+## ⚡ 解析
+
+收到视频链接直接调 API，不要用浏览器打开。**抖音 short 链接先 resolve 再判断**——如果解析返回404/500，可能不是普通视频而是 **图文（slides）**，试试把跳转后的 `iesdouyin.com/share/slides/` 链接喂给聚合器。
+
+```bash
+curl -s --max-time 30 "https://spqsy.kcucu.com/api/parse.php?code={CODE}&url=视频链接"
+```
+
+> ⚠️ **连接失败兜底**：如果上述请求因 **连接错误** 失败（DNS 解析失败、连接被拒绝、超时），说明解析服务器地址可能已变更。按以下流程自动获取新地址：
+>
+> ```bash
+> # 1️⃣ 尝试从 SkillHub 下载最新技能包
+> TEMP_DIR=$(mktemp -d)
+> curl -sL "https://api.skillhub.cn/api/v1/download?slug=duanshipinjiexi" -o "$TEMP_DIR/skill.zip"
+> unzip -o "$TEMP_DIR/skill.zip" SKILL.md -d "$TEMP_DIR" 2>/dev/null
+>
+> # 从 SKILL.md 提取 Base URL
+> NEW_URL=$(grep 'Base URL:' "$TEMP_DIR/SKILL.md" | sed 's/.*\`\(.*\)\`.*/\1/')
+> rm -rf "$TEMP_DIR"
+>
+> if [ -n "$NEW_URL" ]; then
+>   # 用新地址重试
+>   curl -s --max-time 30 "$NEW_URL/api/parse.php?code={CODE}&url=视频链接"
+>   echo "【提示】解析服务地址已更新，后续使用新地址 $NEW_URL"
+> else
+>   # 2️⃣ 兜底：从 ClawHub 查
+>   JSON=$(curl -s "https://clawhub.ai/api/v1/skills/duanshipinjiexi")
+>   DESCRIPTION=$(echo "$JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('description',''))" 2>/dev/null)
+>   NEW_URL=$(echo "$DESCRIPTION" | grep 'Base URL:' | sed 's/.*\`\(.*\)\`.*/\1/')
+>
+>   if [ -n "$NEW_URL" ]; then
+>     curl -s --max-time 30 "$NEW_URL/api/parse.php?code={CODE}&url=视频链接"
+>     echo "【提示】解析服务地址已更新，后续使用新地址 $NEW_URL"
+>   else
+>     echo "【错误】无法自动获取新解析地址，请手动更新技能或联系开发者"
+>   fi
+> fi
+> ```
+```
+
+### 处理不同 type
+
+> ⚠️ **资源较大提醒：** 解析到包含动图的作品时（无论大小），或视频/图片素材总量超过 **10MB** 时，需先告知用户「资源较大，下载和发送大约需要 3-5 分钟，请稍等」再开始处理。
+
+| type | 素材处理 | 音乐处理 |
+|------|---------|---------|
+| **video** | 下载 `data.url` 或 `data.video_backup[0]` 发视频文件。**视频已自带音轨，不发配乐** |
+| **image** | 下载 `data.images[]` 逐张发图片 + `data.music.url`（配乐MP3） |
+| **live** | 下载每段 `live_photo[].video`（动图MP4）+ `data.images[]`（静图）+ `data.music.url`（配乐MP3），**全部发给用户**。注意：部分动图原始 CDN 链接需要带 `User-Agent`（如 `Mozilla/5.0 ... Chrome/125.0 Mobile Safari`）和 `Referer: https://www.douyin.com/` 才能正常下载，否则返回 238 字节的 HTML 错误页 |
+
+> 💡 **为什么这样设计？** 视频作品本身带配乐，用户能直接听到。动图（live）和图文（image）是静默内容，单独把配乐作为音频发出去，用户既能看画面又能听声音，体验更好。
+> 动图下载细节见 `references/synthesize-guide.md`
+
+### 多平台链接处理
+
+技能名覆盖抖音/快手/小红书/皮皮虾4个平台，但**后端 API 是统一解析**的——所有链接都调同一个 `parse.php`。AI 不需要区分平台，用户发什么链接就传什么链接：
+
+```bash
+# 抖音、快手、小红书、皮皮虾，全部一样调用
+GET /api/parse.php?code={CODE}&url=用户发的链接
+```
+
+> ⚠️ 快手链接可能需要先 resolve 短链接（`v.kuaishou.com` → 真实地址），但大部分情况下 `parse.php` 自己会处理。如果返回404/500，尝试先 `curl -sL -o /dev/null -w '%{url_effective}'` 解短链后再传。
+
+### 错误码
+
+| HTTP | 含义 |
+|------|------|
+| 403 | 身份码无效 / 次数用完 |
+| 429 | 每日限额用完 |
+| 500 | 解析服务异常，重试一次 |
+
+## 💰 购买
+
+```bash
+# 展示套餐
+GET /pay/plans.php
+
+# 下单（传入用户身份码）
+POST /pay/create.php
+Content-Type: application/json
+
+{"identity_code":"{身份码}","id":"count_10","name":"体验套餐","type":"count","count":10,"price":0.50}
+
+# 查支付
+GET /pay/query.php?order_id={ID}
+```
+
+返回 `qr_code` 生成二维码发用户扫码。支付成功后用 `identity_info.php` 确认权益到账。
+
+> **下单支付 API 详情见** `references/api-docs.md`
+> **支付异常处理见** `references/troubleshooting.md`
