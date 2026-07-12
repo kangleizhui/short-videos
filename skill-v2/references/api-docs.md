@@ -176,12 +176,15 @@ GET /pay/query.php?order_id=SV20260707XXXX
 
 支付成功后用 `identity_info.php` 确认权益到账。
 
-## 7. 购买时生成身份码
+## 7. 获取身份码（购买用）
 
-用户购买后可能要一个新的身份码来接收套餐：
+购买前需要先有一个身份码：
 
 ```bash
-GET /pay/identity.php?code=用户自定义码
-# 或自动生成
+# 自动生成新身份码（指纹防重，每个设备一个）
 GET /pay/identity.php
 ```
+
+已有身份码想换好记的？购买后通过 `POST /api/modify_identity.php` 修改。
+
+> ⚠️ 不再支持 `?code=自定义码` 方式创建（防滥用）。
