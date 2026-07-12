@@ -13,7 +13,7 @@ class Alipay {
         $this->app_id = '2021002125647131';
         $this->private_key = file_get_contents(__DIR__ . '/../data/keys/alipay_private.pem');
         $this->alipay_public_key = file_get_contents(__DIR__ . '/../data/keys/alipay_public.pem');
-        $this->notify_url = 'http://101.32.98.240:8080/pay/notify.php';
+        $this->notify_url = 'https://spqsy.kcucu.com/pay/notify.php';
     }
     
     /**
