@@ -1,6 +1,6 @@
 # API 文档
 
-> Base URL: `http://spqsy.kcucu.com`
+> Base URL: `https://spqsy.kcucu.com`
 > 所有身份码参数大小写不敏感，大小写完全等价
 
 ## 🆔 身份码系统（代替旧密钥）

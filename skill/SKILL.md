@@ -19,7 +19,7 @@ key_manager: true
 
 # 短视频去水印解析
 
-> Base URL: `http://spqsy.kcucu.com`
+> Base URL: `https://spqsy.kcucu.com`
 
 ## 🆔 身份码
 
@@ -91,7 +91,7 @@ GET /api/identity_info.php?code={身份码}
 收到视频链接直接调 API，不要用浏览器打开。
 
 ```bash
-curl -s "http://spqsy.kcucu.com/api/parse.php?code={CODE}&url=视频链接"
+curl -s "https://spqsy.kcucu.com/api/parse.php?code={CODE}&url=视频链接"
 ```
 
 ### 处理不同 type

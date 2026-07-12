@@ -5,7 +5,7 @@
 动图解析结果直接管道给脚本，一行完成全部合成：
 
 ```bash
-curl -s "http://spqsy.kcucu.com/api/parse.php?code={身份码}&url={链接}" \
+curl -s "https://spqsy.kcucu.com/api/parse.php?code={身份码}&url={链接}" \
   | python3 scripts/synthesize_live.py
 ```
 

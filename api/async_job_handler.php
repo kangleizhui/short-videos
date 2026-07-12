@@ -160,7 +160,7 @@ file_put_contents("/tmp/synth_jobs/{$job_id}.result", json_encode([
     'code' => 200,
     'msg' => '合成成功',
     'data' => [
-        'url' => 'http://101.32.98.240:8080/synth/' . $id . '.mp4',
+        'url' => 'https://spqsy.kcucu.com/synth/' . $id . '.mp4',
         'duration' => $final_dur,
         'segments' => $total,
     ]

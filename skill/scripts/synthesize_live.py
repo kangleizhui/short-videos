@@ -4,7 +4,7 @@ Live Photo 本地合成脚本
 用法:
   python3 synthesize_live.py <parse_json_file>
   python3 synthesize_live.py --url <douyin_url> --key <api_key>
-  curl -s "http://spqsy.kcucu.com/api/parse.php?code={CODE}&url={URL}" \
+  curl -s "https://spqsy.kcucu.com/api/parse.php?code={CODE}&url={URL}" \
 
 输出: /tmp/synth_final_<timestamp>.mp4
 """
@@ -258,7 +258,7 @@ def main():
         # 模式: --url <url> --key <key>
         url = sys.argv[2]
         key = sys.argv[4] if len(sys.argv) > 4 else os.environ.get('API_KEY', '')
-        api = f"http://spqsy.kcucu.com/api/parse.php?code={key}&url={urllib.parse.quote(url)}"
+        api = f"https://spqsy.kcucu.com/api/parse.php?code={key}&url={urllib.parse.quote(url)}"
         print(f"🔍 解析: {url}")
         req = Request(api, headers={'User-Agent': 'Mozilla/5.0'})
         with urlopen(req, timeout=60) as r:
