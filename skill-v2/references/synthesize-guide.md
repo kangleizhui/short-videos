@@ -23,12 +23,27 @@
 
 ## 下载要点
 
-### 1. 动图段 live_photo[].video
+### 1. 视频直链 data.url / video_backup[]
+
+主视频和动图段都需要带 UA 和 Referer，否则 CDN 可能返回 403：
+
+```bash
+UA="Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
+REFERER="https://www.douyin.com/"
+
+# 下载主视频
+curl -sL -A "$UA" -e "$REFERER" "{data.url}" -o video.mp4 --max-time 60
+
+# 下载备用链接
+curl -sL -A "$UA" -e "$REFERER" "{video_backup[0]}" -o video.mp4 --max-time 60
+```
+
+### 2. 动图段 live_photo[].video
 
 每段是一个**短视频（MP4）**，几秒到十几秒不等，可以直接播放。
 
 ```bash
-# 需要带 UA 和 Referer，否则 CDN 返回错误
+# 必须带 UA 和 Referer
 UA="Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
 REFERER="https://www.douyin.com/"
 
